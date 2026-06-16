@@ -108,13 +108,18 @@ export interface Order {
   id: string;
   orderNo: string;
   customerId: string;
+  customerName?: string;
   createdAt: string;
   deliveryDate: string;
   deliveryAddress: string;
+  address?: string;
+  contact?: string;
+  phone?: string;
   totalAmount: number;
   status: OrderStatus;
   items: OrderItem[];
   remarks?: string;
+  remark?: string;
 }
 
 export interface TempLog {

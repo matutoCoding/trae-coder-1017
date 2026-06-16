@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   Truck,
   Thermometer,
@@ -18,6 +18,10 @@ import {
   CircleDot,
   Check,
   ClipboardList,
+  MessageSquare,
+  Settings,
+  Send,
+  FileText,
 } from 'lucide-react';
 import {
   LineChart,
@@ -105,7 +109,15 @@ const calcDuration = (start?: string, end?: string) => {
 };
 
 export default function LogisticsPage() {
-  const { shipments, orders, customers, updateShipmentStatus } = useAppStore();
+  const {
+    shipments,
+    orders,
+    customers,
+    updateShipmentStatus,
+    dispatchShipment,
+    resolveWarning,
+    warningRecords,
+  } = useAppStore();
   const [selectedShipment, setSelectedShipment] = useState<Shipment | null>(
     shipments.find((s) => s.status === 'in_transit' || s.status === 'departed') || shipments[0] || null,
   );
@@ -113,6 +125,26 @@ export default function LogisticsPage() {
   const [chartShipmentId, setChartShipmentId] = useState<string>(
     (shipments.find((s) => s.tempLogs.length > 0) || shipments[0])?.id || '',
   );
+  const [warningShipment, setWarningShipment] = useState<Shipment | null>(null);
+  const [showWarningPanel, setShowWarningPanel] = useState(false);
+  const [successToast, setSuccessToast] = useState<string | null>(null);
+  const [contactShipment, setContactShipment] = useState<Shipment | null>(null);
+  const [showContactPanel, setShowContactPanel] = useState(false);
+  const [resolution, setResolution] = useState('通知司机');
+  const [handler, setHandler] = useState('调度员');
+  const [remark, setRemark] = useState('');
+  const [contactMessage, setContactMessage] = useState('');
+
+  useEffect(() => {
+    if (successToast) {
+      const timer = setTimeout(() => setSuccessToast(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [successToast]);
+
+  const showToast = (msg: string) => {
+    setSuccessToast(msg);
+  };
 
   const today = new Date().toISOString().slice(0, 10);
 
@@ -155,22 +187,33 @@ export default function LogisticsPage() {
     };
   }, [shipments, today]);
 
+  const unresolvedWarningIds = warningRecords
+    .filter((w) => !w.resolved)
+    .map((w) => w.shipmentId);
+  const resolvedWarningIds = warningRecords
+    .filter((w) => w.resolved)
+    .map((w) => w.shipmentId);
+
   const warningShipments = useMemo(() => {
     return shipments
-      .filter((s) =>
-        s.tempLogs.some((l) => l.temperature > 4 || l.temperature < 0),
+      .filter(
+        (s) =>
+          s.tempLogs.some((l) => l.temperature > 4 || l.temperature < 0) &&
+          !resolvedWarningIds.includes(s.id),
       )
       .map((s) => {
         const latestLog = s.tempLogs[s.tempLogs.length - 1];
         const order = orders.find((o) => o.id === s.orderId);
+        const isResolved = resolvedWarningIds.includes(s.id);
         return {
           shipment: s,
           latestTemp: latestLog?.temperature ?? 0,
           orderNo: order?.orderNo || '-',
           customer: customers.find((c) => c.id === order?.customerId)?.name || '-',
+          isResolved,
         };
       });
-  }, [shipments, orders, customers]);
+  }, [shipments, orders, customers, resolvedWarningIds]);
 
   const getOrder = (orderId: string) => orders.find((o) => o.id === orderId);
   const getCustomer = (customerId: string) => customers.find((c) => c.id === customerId);
@@ -181,8 +224,12 @@ export default function LogisticsPage() {
     s.tempLogs.length > 0 ? s.tempLogs[s.tempLogs.length - 1].humidity : 80;
 
   const handleDispatch = (s: Shipment) => {
-    const now = new Date().toISOString();
-    updateShipmentStatus(s.id, 'departed', undefined);
+    const updated = dispatchShipment(s.id);
+    if (updated) {
+      setSelectedShipment(updated);
+      setChartShipmentId(updated.id);
+      showToast(`配送单 ${updated.vehicleNo} 已发车，发车时间 ${new Date(updated.departedAt!).toLocaleString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`);
+    }
   };
 
   const handleViewDetail = (s: Shipment) => {
@@ -191,7 +238,35 @@ export default function LogisticsPage() {
   };
 
   const handleWarningResolve = (s: Shipment) => {
-    alert(`已通知调度员处理配送单 ${s.vehicleNo} 的温度异常`);
+    setWarningShipment(s);
+    setShowWarningPanel(true);
+    setResolution('通知司机');
+    setHandler('调度员');
+    setRemark('');
+  };
+
+  const handleConfirmResolve = () => {
+    if (!warningShipment) return;
+    const success = resolveWarning(warningShipment.id, resolution, handler, remark);
+    if (success) {
+      showToast(`配送单 ${warningShipment.vehicleNo} 温度异常已处理`);
+      setShowWarningPanel(false);
+      setWarningShipment(null);
+    }
+  };
+
+  const handleContactDriver = (s: Shipment) => {
+    setContactShipment(s);
+    setShowContactPanel(true);
+    setContactMessage('');
+  };
+
+  const handleSendMessage = () => {
+    if (!contactShipment || !contactMessage.trim()) return;
+    showToast(`已向 ${contactShipment.driver} 发送消息：${contactMessage.slice(0, 30)}${contactMessage.length > 30 ? '...' : ''}`);
+    setShowContactPanel(false);
+    setContactShipment(null);
+    setContactMessage('');
   };
 
   const chartShipment = shipments.find((s) => s.id === chartShipmentId);
@@ -1213,7 +1288,7 @@ export default function LogisticsPage() {
               </button>
             ) : null}
             <button
-              onClick={() => alert(`正在联系司机 ${selectedShipment.driver}...`)}
+              onClick={() => handleContactDriver(selectedShipment)}
               className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-cream-200 text-forest-700 font-medium text-sm hover:bg-cream-50 transition-colors shadow-sm"
             >
               <Phone className="w-4 h-4" />
@@ -1301,6 +1376,203 @@ export default function LogisticsPage() {
           className="fixed inset-0 bg-black/30 z-40 hidden lg:block"
           onClick={() => setDrawerOpen(false)}
         />
+      )}
+
+      {successToast && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 animate-fadeInUp">
+          <div className="bg-forest-700 text-white px-5 py-3 rounded-xl shadow-lg flex items-center gap-3">
+            <CheckCircle2 className="w-5 h-5 text-emerald-300" />
+            <span className="text-sm font-medium">{successToast}</span>
+          </div>
+        </div>
+      )}
+
+      {showWarningPanel && warningShipment && (
+        <>
+          <div
+            className="fixed inset-0 bg-black/40 z-50"
+            onClick={() => setShowWarningPanel(false)}
+          />
+          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-lg animate-fadeInUp">
+            <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
+              <div className="bg-gradient-to-r from-red-600 to-red-700 px-6 py-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
+                      <AlertTriangle className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-semibold text-white">温度异常处理</h3>
+                      <p className="text-sm text-red-100">配送单 {warningShipment.vehicleNo}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowWarningPanel(false)}
+                    className="p-1.5 rounded-lg hover:bg-white/20 transition-colors"
+                  >
+                    <X className="w-5 h-5 text-white" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-6 space-y-5">
+                <div className="p-4 bg-red-50 rounded-xl border border-red-100">
+                  <h4 className="text-sm font-semibold text-red-800 mb-3 flex items-center gap-2">
+                    <Thermometer className="w-4 h-4" /> 最近温度记录
+                  </h4>
+                  <div className="space-y-2 max-h-32 overflow-y-auto">
+                    {warningShipment.tempLogs.slice(-6).reverse().map((log, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-center justify-between text-xs py-1.5 border-b border-red-100 last:border-0"
+                      >
+                        <span className="text-cream-600">{log.time}</span>
+                        <div className="flex items-center gap-4">
+                          <span className={cn('font-medium', getTempColor(log.temperature))}>
+                            {log.temperature.toFixed(1)}℃
+                          </span>
+                          <span className="text-sky-600 font-medium">{log.humidity}%</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="label-base">处理方式</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {['通知司机', '调整温控', '标记已处理'].map((opt) => (
+                      <button
+                        key={opt}
+                        onClick={() => setResolution(opt)}
+                        className={cn(
+                          'px-3 py-2.5 rounded-lg text-sm font-medium border transition-all',
+                          resolution === opt
+                            ? 'bg-forest-600 text-white border-forest-600'
+                            : 'bg-white text-forest-700 border-cream-300 hover:border-forest-300',
+                        )}
+                      >
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="label-base">处理人</label>
+                  <select
+                    value={handler}
+                    onChange={(e) => setHandler(e.target.value)}
+                    className="input-base"
+                  >
+                    <option value="调度员">调度员</option>
+                    <option value="质检员">质检员</option>
+                    <option value="库管员">库管员</option>
+                    <option value="其他">其他</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="label-base">备注</label>
+                  <textarea
+                    value={remark}
+                    onChange={(e) => setRemark(e.target.value)}
+                    placeholder="请输入处理备注..."
+                    className="input-base min-h-[80px] resize-none"
+                  />
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    onClick={() => setShowWarningPanel(false)}
+                    className="flex-1 btn-secondary"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={handleConfirmResolve}
+                    className="flex-1 btn-primary"
+                  >
+                    <Check className="w-4 h-4" />
+                    确认处理
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {showContactPanel && contactShipment && (
+        <>
+          <div
+            className="fixed inset-0 bg-black/40 z-50"
+            onClick={() => setShowContactPanel(false)}
+          />
+          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md animate-fadeInUp">
+            <div className="bg-white rounded-2xl shadow-2xl p-6">
+              <div className="flex items-center justify-between mb-5">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-sky-100 flex items-center justify-center">
+                    <MessageSquare className="w-5 h-5 text-sky-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-forest-900">联系司机</h3>
+                    <p className="text-sm text-cream-500">{contactShipment.driver} · {contactShipment.vehicleNo}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowContactPanel(false)}
+                  className="p-1.5 rounded-lg hover:bg-cream-100 transition-colors"
+                >
+                  <X className="w-5 h-5 text-cream-500" />
+                </button>
+              </div>
+
+              <div className="mb-4">
+                <label className="label-base">发送消息</label>
+                <textarea
+                  value={contactMessage}
+                  onChange={(e) => setContactMessage(e.target.value)}
+                  placeholder="请输入要发送给司机的消息..."
+                  className="input-base min-h-[120px] resize-none"
+                />
+              </div>
+
+              <div className="mb-4">
+                <p className="text-xs text-cream-500 mb-2">快捷消息</p>
+                <div className="flex flex-wrap gap-2">
+                  {['请注意冷链温度', '预计到达时间', '收货地址确认', '有异常请及时汇报'].map((msg) => (
+                    <button
+                      key={msg}
+                      onClick={() => setContactMessage(msg)}
+                      className="px-3 py-1.5 rounded-lg text-xs bg-cream-100 text-forest-700 hover:bg-forest-100 transition-colors"
+                    >
+                      {msg}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowContactPanel(false)}
+                  className="flex-1 btn-secondary"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleSendMessage}
+                  disabled={!contactMessage.trim()}
+                  className="flex-1 btn-primary"
+                >
+                  <Send className="w-4 h-4" />
+                  发送
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );

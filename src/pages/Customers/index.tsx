@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   Users,
   Building2,
@@ -20,6 +20,11 @@ import {
   Calendar,
   Package,
   ArrowRight,
+  CheckCircle2,
+  Download,
+  Bell,
+  Send,
+  Edit3,
 } from 'lucide-react';
 import {
   BarChart,
@@ -36,7 +41,7 @@ import { StatCard } from '@/components/ui/StatCard';
 import { DataTable } from '@/components/ui/DataTable';
 import { cn } from '@/lib/utils';
 import { formatMoney, formatDate, getStatusText, formatNum } from '@/utils/format';
-import type { Customer, Order, Return as ReturnType } from '@/types';
+import type { Customer, Return as ReturnType, Order, OrderItem } from '@/types';
 
 type CustomerType = 'all' | 'funeral_home' | 'flower_shop' | 'distributor';
 type CustomerLevel = 'all' | 'A' | 'B' | 'C';
@@ -103,13 +108,39 @@ const getCreditPercent = (customer: Customer): number => {
 };
 
 export default function CustomersPage() {
-  const { customers, orders, returns } = useAppStore();
+  const {
+    customers,
+    orders,
+    returns,
+    addOrder,
+    updateCustomerCredit,
+    addPaymentReminder,
+  } = useAppStore();
   const [searchText, setSearchText] = useState('');
   const [activeType, setActiveType] = useState<CustomerType>('all');
   const [activeLevel, setActiveLevel] = useState<CustomerLevel>('all');
   const [activeTab, setActiveTab] = useState<TabKey>('list');
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerWithExtra | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [successToast, setSuccessToast] = useState<string | null>(null);
+  const [creditModalOpen, setCreditModalOpen] = useState(false);
+  const [reminderModalOpen, setReminderModalOpen] = useState(false);
+  const [orderModalOpen, setOrderModalOpen] = useState(false);
+  const [newCreditLimit, setNewCreditLimit] = useState('');
+  const [creditRemark, setCreditRemark] = useState('');
+  const [reminderAmount, setReminderAmount] = useState('');
+  const [reminderMessage, setReminderMessage] = useState('');
+  const [newOrderAmount, setNewOrderAmount] = useState('');
+  const [newOrderRemark, setNewOrderRemark] = useState('');
+
+  useEffect(() => {
+    if (successToast) {
+      const timer = setTimeout(() => setSuccessToast(null), 3500);
+      return () => clearTimeout(timer);
+    }
+  }, [successToast]);
+
+  const showToast = (msg: string) => setSuccessToast(msg);
 
   const currentMonth = new Date().toISOString().slice(0, 7);
   const customersWithExtra = customers as CustomerWithExtra[];
@@ -213,6 +244,143 @@ export default function CustomersPage() {
 
   const closeDrawer = () => {
     setDrawerOpen(false);
+  };
+
+  const openNewOrder = (customer: CustomerWithExtra) => {
+    setSelectedCustomer(customer);
+    setNewOrderAmount('');
+    setNewOrderRemark('');
+    setOrderModalOpen(true);
+  };
+
+  const openAdjustCredit = (customer: CustomerWithExtra) => {
+    setSelectedCustomer(customer);
+    setNewCreditLimit(customer.creditLimit.toString());
+    setCreditRemark('');
+    setCreditModalOpen(true);
+  };
+
+  const openReminder = (customer: CustomerWithExtra) => {
+    setSelectedCustomer(customer);
+    const over = customer.usedCredit * 0.3;
+    setReminderAmount(over > 0 ? Math.round(over).toString() : '');
+    setReminderMessage(`尊敬的${customer.name}，您的账款已接近信用额度，请及时安排付款，谢谢合作！`);
+    setReminderModalOpen(true);
+  };
+
+  const handleAddOrder = () => {
+    if (!selectedCustomer) return;
+    const amount = parseFloat(newOrderAmount);
+    if (!newOrderAmount || isNaN(amount) || amount <= 0) {
+      showToast('请输入有效的订单金额');
+      return;
+    }
+    const newOrder: Order = {
+      id: `O${Date.now()}`,
+      orderNo: `DD${new Date().toISOString().slice(2, 10).replace(/-/g, '')}${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`,
+      customerId: selectedCustomer.id,
+      customerName: selectedCustomer.name,
+      items: [{
+        id: 'item1',
+        variety: 'chrysanthemum',
+        grade: 'A',
+        quantity: Math.round(amount / 1.2),
+        unitPrice: 1.2,
+      }],
+      totalAmount: amount,
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+      deliveryDate: new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10),
+      deliveryAddress: selectedCustomer.address,
+      address: selectedCustomer.address,
+      contact: selectedCustomer.contact,
+      phone: selectedCustomer.phone,
+      remark: newOrderRemark,
+    };
+    addOrder(newOrder);
+    setOrderModalOpen(false);
+    setNewOrderAmount('');
+    setNewOrderRemark('');
+    showToast(`订单 ${newOrder.orderNo} 已创建，客户：${selectedCustomer.name}`);
+  };
+
+  const handleUpdateCredit = () => {
+    if (!selectedCustomer) return;
+    const limit = parseInt(newCreditLimit, 10);
+    if (!newCreditLimit || isNaN(limit) || limit <= 0) {
+      showToast('请输入有效的额度');
+      return;
+    }
+    const updated = updateCustomerCredit(selectedCustomer.id, limit, creditRemark);
+    if (updated) {
+      setSelectedCustomer({ ...selectedCustomer, creditLimit: limit });
+      setCreditModalOpen(false);
+      setNewCreditLimit('');
+      setCreditRemark('');
+      showToast(`${selectedCustomer.name} 额度已调整为 ${formatMoney(limit)}`);
+    }
+  };
+
+  const handleSendReminder = () => {
+    if (!selectedCustomer) return;
+    const amount = parseFloat(reminderAmount);
+    if (!reminderAmount || isNaN(amount) || amount <= 0) {
+      showToast('请输入有效的催款金额');
+      return;
+    }
+    const result = addPaymentReminder(selectedCustomer.id, reminderMessage, amount);
+    if (result) {
+      setReminderModalOpen(false);
+      setReminderAmount('');
+      setReminderMessage('');
+      showToast(`已向 ${selectedCustomer.name} 发送催款提醒`);
+    }
+  };
+
+  const handleExportCSV = () => {
+    if (!selectedCustomer) {
+      showToast('请先选择客户');
+      return;
+    }
+    const headers = ['客户名称', '客户类型', '联系人', '联系电话', '地址', '信用等级', '账期(天)', '信用额度', '已用额度', '剩余额度', '累计采购', '合作日期', '客户状态'];
+    const rows = customers.map(c => [
+      c.name,
+      typeNameMap[c.type] || c.type,
+      c.contact,
+      c.phone,
+      c.address,
+      c.level,
+      c.paymentTerms,
+      c.creditLimit,
+      c.usedCredit,
+      c.creditLimit - c.usedCredit,
+      (c as any).totalPurchases || 0,
+      (c as any).joinDate || '-',
+      c.status === 'active' ? '活跃' : '停用',
+    ]);
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+    ].join('\n');
+
+    const bom = '\ufeff';
+    const blob = new Blob([bom + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `客户报表_${selectedCustomer.name}_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast(`客户报表已导出：${link.download}`);
+  };
+
+  const closeAllModals = () => {
+    setCreditModalOpen(false);
+    setReminderModalOpen(false);
+    setOrderModalOpen(false);
   };
 
   const renderCustomerCard = (customer: CustomerWithExtra, index: number) => {
@@ -356,13 +524,16 @@ export default function CustomersPage() {
             查看详情
           </button>
           <button
-            onClick={() => openDrawer(customer)}
+            onClick={() => openReminder(customer)}
             className="flex-1 btn-secondary py-2 text-xs"
           >
-            <CreditCard className="w-3.5 h-3.5" />
-            查看账期
+            <Bell className="w-3.5 h-3.5" />
+            催款提醒
           </button>
-          <button className="flex-1 btn-primary py-2 text-xs">
+          <button
+            onClick={() => openNewOrder(customer)}
+            className="flex-1 btn-primary py-2 text-xs"
+          >
             <Plus className="w-3.5 h-3.5" />
             新增订单
           </button>
@@ -995,15 +1166,24 @@ export default function CustomersPage() {
           </div>
 
           <div className="border-t border-cream-200 p-4 bg-white flex items-center gap-3">
-            <button className="flex-1 btn-secondary">
-              <CreditCard className="w-4 h-4" />
+            <button
+              onClick={() => selectedCustomer && openAdjustCredit(selectedCustomer)}
+              className="flex-1 btn-secondary"
+            >
+              <Edit3 className="w-4 h-4" />
               调整额度
             </button>
-            <button className="flex-1 btn-secondary">
-              <FileText className="w-4 h-4" />
+            <button
+              onClick={handleExportCSV}
+              className="flex-1 btn-secondary"
+            >
+              <Download className="w-4 h-4" />
               导出报表
             </button>
-            <button className="flex-1 btn-primary">
+            <button
+              onClick={() => selectedCustomer && openNewOrder(selectedCustomer)}
+              className="flex-1 btn-primary"
+            >
               <Plus className="w-4 h-4" />
               新增订单
             </button>
@@ -1158,6 +1338,204 @@ export default function CustomersPage() {
       {activeTab === 'returns' && renderReturnsTab()}
 
       {renderDrawer()}
+
+      {successToast && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] animate-fadeInUp">
+          <div className="bg-forest-700 text-white px-5 py-3 rounded-xl shadow-lg flex items-center gap-3">
+            <CheckCircle2 className="w-5 h-5 text-emerald-300" />
+            <span className="text-sm font-medium">{successToast}</span>
+          </div>
+        </div>
+      )}
+
+      {orderModalOpen && selectedCustomer && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center">
+          <div className="absolute inset-0 bg-forest-900/40 backdrop-blur-sm" onClick={closeAllModals} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 animate-fadeInUp">
+            <div className="flex items-center justify-between p-5 border-b border-cream-200">
+              <h3 className="text-lg font-bold text-forest-900 flex items-center gap-2">
+                <Plus className="w-5 h-5 text-forest-600" />
+                新增订单
+              </h3>
+              <button onClick={closeAllModals} className="p-2 rounded-lg hover:bg-cream-100">
+                <X className="w-5 h-5 text-cream-500" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-forest-800 mb-1.5">客户名称</label>
+                <input
+                  type="text"
+                  value={selectedCustomer.name}
+                  disabled
+                  className="input-base bg-cream-50 text-cream-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-forest-800 mb-1.5">订单金额（元）</label>
+                <input
+                  type="number"
+                  placeholder="请输入订单金额"
+                  value={newOrderAmount}
+                  onChange={(e) => setNewOrderAmount(e.target.value)}
+                  className="input-base"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-forest-800 mb-1.5">备注</label>
+                <textarea
+                  placeholder="请输入订单备注（可选）"
+                  value={newOrderRemark}
+                  onChange={(e) => setNewOrderRemark(e.target.value)}
+                  rows={3}
+                  className="input-base resize-none"
+                />
+              </div>
+              <div className="flex items-center gap-3 pt-2">
+                <button onClick={closeAllModals} className="flex-1 btn-secondary">
+                  取消
+                </button>
+                <button onClick={handleAddOrder} className="flex-1 btn-primary">
+                  <Send className="w-4 h-4" />
+                  创建订单
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {creditModalOpen && selectedCustomer && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center">
+          <div className="absolute inset-0 bg-forest-900/40 backdrop-blur-sm" onClick={closeAllModals} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 animate-fadeInUp">
+            <div className="flex items-center justify-between p-5 border-b border-cream-200">
+              <h3 className="text-lg font-bold text-forest-900 flex items-center gap-2">
+                <CreditCard className="w-5 h-5 text-forest-600" />
+                调整信用额度
+              </h3>
+              <button onClick={closeAllModals} className="p-2 rounded-lg hover:bg-cream-100">
+                <X className="w-5 h-5 text-cream-500" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-forest-800 mb-1.5">客户名称</label>
+                <input
+                  type="text"
+                  value={selectedCustomer.name}
+                  disabled
+                  className="input-base bg-cream-50 text-cream-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-forest-800 mb-1.5">当前额度</label>
+                <input
+                  type="text"
+                  value={`${formatMoney(selectedCustomer.creditLimit)}`}
+                  disabled
+                  className="input-base bg-cream-50 text-cream-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-forest-800 mb-1.5">新额度（元）</label>
+                <input
+                  type="number"
+                  placeholder="请输入新的信用额度"
+                  value={newCreditLimit}
+                  onChange={(e) => setNewCreditLimit(e.target.value)}
+                  className="input-base"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-forest-800 mb-1.5">调整备注</label>
+                <textarea
+                  placeholder="请输入调整原因（可选）"
+                  value={creditRemark}
+                  onChange={(e) => setCreditRemark(e.target.value)}
+                  rows={2}
+                  className="input-base resize-none"
+                />
+              </div>
+              <div className="flex items-center gap-3 pt-2">
+                <button onClick={closeAllModals} className="flex-1 btn-secondary">
+                  取消
+                </button>
+                <button onClick={handleUpdateCredit} className="flex-1 btn-primary">
+                  <CheckCircle2 className="w-4 h-4" />
+                  确认调整
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {reminderModalOpen && selectedCustomer && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center">
+          <div className="absolute inset-0 bg-forest-900/40 backdrop-blur-sm" onClick={closeAllModals} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 animate-fadeInUp">
+            <div className="flex items-center justify-between p-5 border-b border-cream-200">
+              <h3 className="text-lg font-bold text-forest-900 flex items-center gap-2">
+                <Bell className="w-5 h-5 text-warning-500" />
+                催款提醒
+              </h3>
+              <button onClick={closeAllModals} className="p-2 rounded-lg hover:bg-cream-100">
+                <X className="w-5 h-5 text-cream-500" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-forest-800 mb-1.5">客户名称</label>
+                <input
+                  type="text"
+                  value={selectedCustomer.name}
+                  disabled
+                  className="input-base bg-cream-50 text-cream-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-forest-800 mb-1.5">已用额度</label>
+                <input
+                  type="text"
+                  value={`${formatMoney(selectedCustomer.usedCredit)} / ${formatMoney(selectedCustomer.creditLimit)}`}
+                  disabled
+                  className="input-base bg-cream-50 text-cream-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-forest-800 mb-1.5">催款金额（元）</label>
+                <input
+                  type="number"
+                  placeholder="请输入催款金额"
+                  value={reminderAmount}
+                  onChange={(e) => setReminderAmount(e.target.value)}
+                  className="input-base"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-forest-800 mb-1.5">催款留言</label>
+                <textarea
+                  placeholder="请输入催款留言内容"
+                  value={reminderMessage}
+                  onChange={(e) => setReminderMessage(e.target.value)}
+                  rows={4}
+                  className="input-base resize-none"
+                />
+              </div>
+              <div className="flex items-center gap-3 pt-2">
+                <button onClick={closeAllModals} className="flex-1 btn-secondary">
+                  取消
+                </button>
+                <button onClick={handleSendReminder} className="flex-1 btn-primary bg-gradient-to-r from-warning-500 to-warning-600 hover:from-warning-600 hover:to-warning-700">
+                  <Send className="w-4 h-4" />
+                  发送提醒
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

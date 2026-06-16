@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   Scissors,
   Award,
@@ -10,6 +10,9 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  Check,
+  X,
+  Snowflake,
 } from 'lucide-react';
 import {
   PieChart,
@@ -50,8 +53,11 @@ interface HarvestLogRow extends Harvest {
   lossRate?: number;
 }
 
+const PRE_COOL_LOCATIONS = ['冷库A-01', '冷库A-02', '冷库A-03', '冷库B-01', '冷库B-02', '冷库C-01'];
+const PRESERVATIVES = ['8-HQC', 'STS', '蔗糖+8-HQC', '专用保鲜剂'];
+
 export default function PostHarvestPage() {
-  const { harvests, inventory, batches, fields, addHarvest } = useAppStore();
+  const { harvests, inventory, batches, fields, addHarvest, addInventoryItems } = useAppStore();
   const [currentStep, setCurrentStep] = useState(1);
   const [formExpanded, setFormExpanded] = useState(true);
 
@@ -59,6 +65,16 @@ export default function PostHarvestPage() {
   const [harvestedAt, setHarvestedAt] = useState(formatDate(new Date()));
   const [quantity, setQuantity] = useState('');
   const [staff, setStaff] = useState('');
+  const [successToast, setSuccessToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (successToast) {
+      const timer = setTimeout(() => setSuccessToast(null), 3500);
+      return () => clearTimeout(timer);
+    }
+  }, [successToast]);
+
+  const showToast = (msg: string) => setSuccessToast(msg);
 
   const selectedBatch = useMemo(() => {
     return batches.find((b) => b.id === batchId);
@@ -179,15 +195,20 @@ export default function PostHarvestPage() {
 
   const handleSubmit = () => {
     if (!batchId || !quantity || !staff) {
-      alert('请填写完整信息');
+      showToast('请填写完整信息');
       return;
     }
     const qty = parseInt(quantity, 10);
     if (isNaN(qty) || qty <= 0) {
-      alert('请输入有效的采收数量');
+      showToast('请输入有效的采收数量');
       return;
     }
     const total = qty;
+    const gradeAQty = Math.round(total * (estimateRatio.A / 100));
+    const gradeBQty = Math.round(total * (estimateRatio.B / 100));
+    const gradeCQty = Math.round(total * (estimateRatio.C / 100));
+    const defectiveQty = Math.round(total * (estimateRatio.defective / 100));
+
     const newHarvest: Harvest = {
       id: `H${Date.now()}`,
       batchId,
@@ -195,16 +216,73 @@ export default function PostHarvestPage() {
       harvestedAt,
       quantity: total,
       staff,
-      gradeAQty: Math.round(total * (estimateRatio.A / 100)),
-      gradeBQty: Math.round(total * (estimateRatio.B / 100)),
-      gradeCQty: Math.round(total * (estimateRatio.C / 100)),
-      defectiveQty: Math.round(total * (estimateRatio.defective / 100)),
+      gradeAQty,
+      gradeBQty,
+      gradeCQty,
+      defectiveQty,
     };
     addHarvest(newHarvest);
+
+    const variety = selectedBatch?.variety || 'chrysanthemum';
+    const now = new Date();
+    const preCoolItems: Inventory[] = [];
+
+    if (gradeAQty > 0) {
+      preCoolItems.push({
+        id: `INV-${Date.now()}-A`,
+        harvestId: newHarvest.id,
+        variety,
+        grade: 'A',
+        quantity: gradeAQty,
+        preCooledAt: now.toISOString(),
+        preCoolTemp: 2 + Math.random(),
+        preCoolDuration: 4,
+        preservative: PRESERVATIVES[Math.floor(Math.random() * PRESERVATIVES.length)],
+        location: PRE_COOL_LOCATIONS[Math.floor(Math.random() * PRE_COOL_LOCATIONS.length)],
+        status: 'precooling',
+      });
+    }
+    if (gradeBQty > 0) {
+      preCoolItems.push({
+        id: `INV-${Date.now()}-B`,
+        harvestId: newHarvest.id,
+        variety,
+        grade: 'B',
+        quantity: gradeBQty,
+        preCooledAt: now.toISOString(),
+        preCoolTemp: 2.5 + Math.random(),
+        preCoolDuration: 3,
+        preservative: PRESERVATIVES[Math.floor(Math.random() * PRESERVATIVES.length)],
+        location: PRE_COOL_LOCATIONS[Math.floor(Math.random() * PRE_COOL_LOCATIONS.length)],
+        status: 'precooling',
+      });
+    }
+    if (gradeCQty > 0) {
+      preCoolItems.push({
+        id: `INV-${Date.now()}-C`,
+        harvestId: newHarvest.id,
+        variety,
+        grade: 'C',
+        quantity: gradeCQty,
+        preCooledAt: now.toISOString(),
+        preCoolTemp: 3 + Math.random(),
+        preCoolDuration: 2,
+        preservative: PRESERVATIVES[Math.floor(Math.random() * PRESERVATIVES.length)],
+        location: PRE_COOL_LOCATIONS[Math.floor(Math.random() * PRE_COOL_LOCATIONS.length)],
+        status: 'precooling',
+      });
+    }
+
+    if (preCoolItems.length > 0) {
+      addInventoryItems(preCoolItems);
+    }
+
     setQuantity('');
     setStaff('');
     setBatchId('');
-    alert('采收登记提交成功');
+    setCurrentStep(2);
+
+    showToast(`采收登记成功！已自动生成 ${preCoolItems.length} 条预冷记录`);
   };
 
   const preCoolColumns = [
@@ -797,6 +875,15 @@ export default function PostHarvestPage() {
           emptyText="暂无采收记录"
         />
       </div>
+
+      {successToast && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 animate-fadeInUp">
+          <div className="bg-forest-700 text-white px-5 py-3 rounded-xl shadow-lg flex items-center gap-3">
+            <CheckCircle2 className="w-5 h-5 text-emerald-300" />
+            <span className="text-sm font-medium">{successToast}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

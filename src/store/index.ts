@@ -8,6 +8,7 @@ import type {
   Shipment,
   Return,
   PriceRecord,
+  TempLog,
 } from '@/types';
 import {
   initialFields,
@@ -24,6 +25,15 @@ import {
   festivalForecasts as festivalPredictions,
 } from '@/data/mockData';
 import { create } from 'zustand';
+
+export interface WarningRecord {
+  shipmentId: string;
+  resolved: boolean;
+  resolvedAt?: string;
+  resolution?: string;
+  handler?: string;
+  remark?: string;
+}
 
 export interface AppStats {
   totalFields: number;
@@ -49,19 +59,50 @@ interface AppState {
   lossStats: any[];
   monthlyReports: any[];
   festivalPredictions: any[];
+  warningRecords: WarningRecord[];
 
   updateFieldStatus: (id: string, status: Field['status']) => void;
   addHarvest: (harvest: Harvest) => void;
+  addInventoryItems: (items: Inventory[]) => void;
   updateOrderStatus: (id: string, status: Order['status']) => void;
   addOrder: (order: Order) => void;
   addReturn: (returnItem: Return) => void;
+  addShipment: (shipment: Shipment) => void;
+  createShipmentFromOrder: (orderId: string) => Shipment;
+  dispatchShipment: (shipmentId: string) => Shipment | null;
   updateShipmentStatus: (
     id: string,
     status: Shipment['status'],
     arrivedAt?: string,
   ) => void;
+  updateCustomerCredit: (
+    customerId: string,
+    newLimit: number,
+    remark?: string,
+  ) => Customer | null;
+  addPaymentReminder: (
+    customerId: string,
+    message: string,
+    amount: number,
+  ) => boolean;
+  resolveWarning: (
+    shipmentId: string,
+    resolution: string,
+    handler: string,
+    remark?: string,
+  ) => boolean;
   getStats: () => AppStats;
+  generateTempLogs: (startTime: string, hours: number) => TempLog[];
 }
+
+const VEHICLES = [
+  { vehicleNo: '沪B·D8521', driver: '李师傅' },
+  { vehicleNo: '沪B·E3769', driver: '王师傅' },
+  { vehicleNo: '沪B·F5284', driver: '张师傅' },
+  { vehicleNo: '沪B·G9035', driver: '刘师傅' },
+];
+
+const PRE_COOL_LOCATIONS = ['冷库A-01', '冷库A-02', '冷库A-03', '冷库B-01', '冷库B-02', '冷库C-01'];
 
 export const useAppStore = create<AppState>((set, get) => ({
   fields: initialFields,
@@ -76,6 +117,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   lossStats,
   monthlyReports,
   festivalPredictions,
+  warningRecords: [],
 
   updateFieldStatus: (id, status) =>
     set((state) => ({
@@ -87,6 +129,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   addHarvest: (harvest) =>
     set((state) => ({
       harvests: [...state.harvests, harvest],
+    })),
+
+  addInventoryItems: (items) =>
+    set((state) => ({
+      inventory: [...state.inventory, ...items],
     })),
 
   updateOrderStatus: (id, status) =>
@@ -106,12 +153,148 @@ export const useAppStore = create<AppState>((set, get) => ({
       returns: [...state.returns, returnItem],
     })),
 
+  addShipment: (shipment) =>
+    set((state) => ({
+      shipments: [...state.shipments, shipment],
+    })),
+
+  generateTempLogs: (startTime: string, hours: number) => {
+    const logs: TempLog[] = [];
+    const start = new Date(startTime);
+    const totalPoints = hours * 6;
+    let baseTemp = 2.5;
+    let baseHumidity = 82;
+
+    for (let i = 0; i < totalPoints; i++) {
+      const time = new Date(start.getTime() + i * 10 * 60000);
+      const tempVariation = (Math.sin(i * 0.3) + Math.cos(i * 0.5)) * 0.8;
+      const humVariation = (Math.sin(i * 0.4) + Math.cos(i * 0.2)) * 3;
+      let temp = baseTemp + tempVariation + (Math.random() - 0.5) * 0.6;
+      let humidity = Math.max(65, Math.min(95, baseHumidity + humVariation + (Math.random() - 0.5) * 5));
+
+      if (i > 50 && i < 58 && Math.random() > 0.5) {
+        temp = 4.5 + Math.random() * 2;
+      }
+
+      logs.push({
+        time: time.toISOString().slice(0, 16).replace('T', ' '),
+        temperature: parseFloat(temp.toFixed(1)),
+        humidity: parseFloat(humidity.toFixed(0)),
+      });
+    }
+    return logs;
+  },
+
+  createShipmentFromOrder: (orderId) => {
+    const { orders, shipments, generateTempLogs } = get();
+    const order = orders.find((o) => o.id === orderId);
+    if (!order) {
+      throw new Error('订单不存在');
+    }
+
+    const usedVehicles = shipments.map((s) => s.vehicleNo);
+    const availableVehicle = VEHICLES.find((v) => !usedVehicles.includes(v.vehicleNo)) || VEHICLES[0];
+    const now = new Date();
+    const estimatedHours = 3 + Math.floor(Math.random() * 5);
+    const estArrival = new Date(now.getTime() + estimatedHours * 3600000);
+
+    const newShipment: Shipment = {
+      id: `SH-${Date.now()}`,
+      orderId,
+      vehicleNo: availableVehicle.vehicleNo,
+      driver: availableVehicle.driver,
+      departedAt: now.toISOString(),
+      estimatedArrival: estArrival.toISOString(),
+      status: 'departed',
+      tempLogs: generateTempLogs(now.toISOString(), estimatedHours + 1),
+      route: order.deliveryAddress,
+    };
+
+    return newShipment;
+  },
+
+  dispatchShipment: (shipmentId) => {
+    const { shipments, generateTempLogs } = get();
+    const shipment = shipments.find((s) => s.id === shipmentId);
+    if (!shipment) return null;
+
+    const now = new Date();
+    const estimatedHours = 3 + Math.floor(Math.random() * 5);
+    const estArrival = new Date(now.getTime() + estimatedHours * 3600000);
+
+    const updated: Shipment = {
+      ...shipment,
+      departedAt: now.toISOString(),
+      estimatedArrival: estArrival.toISOString(),
+      status: 'departed' as const,
+      tempLogs: generateTempLogs(now.toISOString(), estimatedHours + 1),
+    };
+
+    set((state) => ({
+      shipments: state.shipments.map((s) =>
+        s.id === shipmentId ? updated : s,
+      ),
+    }));
+
+    return updated;
+  },
+
   updateShipmentStatus: (id, status, arrivedAt) =>
     set((state) => ({
       shipments: state.shipments.map((s) =>
-        s.id === id ? { ...s, status, arrivedAt } : s,
+        s.id === id ? { ...s, status, arrivedAt: arrivedAt || s.arrivedAt } : s,
       ),
     })),
+
+  updateCustomerCredit: (customerId, newLimit, remark) => {
+    const customer = get().customers.find((c) => c.id === customerId);
+    if (!customer) return null;
+
+    const updated: Customer = {
+      ...customer,
+      creditLimit: newLimit,
+    };
+
+    set((state) => ({
+      customers: state.customers.map((c) =>
+        c.id === customerId ? updated : c,
+      ),
+    }));
+
+    return updated;
+  },
+
+  addPaymentReminder: (customerId, message, amount) => {
+    const customer = get().customers.find((c) => c.id === customerId);
+    if (!customer) return false;
+
+    console.log(`[催款提醒] 已向 ${customer.name} 发送催款通知，金额 ¥${amount.toLocaleString()}：${message}`);
+    return true;
+  },
+
+  resolveWarning: (shipmentId, resolution, handler, remark) => {
+    const shipment = get().shipments.find((s) => s.id === shipmentId);
+    if (!shipment) return false;
+
+    const now = new Date().toISOString();
+    const record = {
+      shipmentId,
+      resolved: true,
+      resolvedAt: now,
+      resolution,
+      handler,
+      remark,
+    };
+
+    set((state) => ({
+      warningRecords: [
+        ...state.warningRecords.filter((w) => w.shipmentId !== shipmentId),
+        record,
+      ],
+    }));
+
+    return true;
+  },
 
   getStats: () => {
     const {
@@ -121,6 +304,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       shipments,
       customers,
       monthlyReports,
+      warningRecords,
     } = get();
 
     const totalFields = fields.length;
@@ -139,10 +323,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     ).length;
 
     const inTransitShipments = shipments.filter(
-      (s) => s.status === 'in_transit',
+      (s) => s.status === 'in_transit' || s.status === 'departed',
     ).length;
 
+    const unresolvedWarningIds = warningRecords
+      .filter((w) => !w.resolved)
+      .map((w) => w.shipmentId);
     const coldChainWarnings = shipments.filter((s) =>
+      !unresolvedWarningIds.includes(s.id) &&
       s.tempLogs.some(
         (log) => log.temperature > 4 || log.temperature < 0,
       ),

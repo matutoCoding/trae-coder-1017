@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   ClipboardList,
   Plus,
@@ -15,7 +16,20 @@ import {
   Clock,
   User,
   ChevronRight,
+  ChevronDown,
+  MessageSquare,
+  CheckCircle2,
+  Building2,
+  Flower2,
+  Store,
 } from 'lucide-react';
+
+const typeNameMap: Record<string, string> = {
+  funeral_home: '殡仪馆',
+  flower_shop: '花店',
+  distributor: '经销商',
+  retail: '零售',
+};
 import {
   AreaChart,
   Area,
@@ -118,9 +132,24 @@ const formatDate = (dateStr: string) => {
 const PIE_COLORS = ['#059669', '#0ea5e9', '#f59e0b'];
 
 export default function OrdersPage() {
-  const { orders, customers, updateOrderStatus } = useAppStore();
+  const navigate = useNavigate();
+  const { orders, customers, shipments, updateOrderStatus, addShipment, createShipmentFromOrder, addOrder } = useAppStore();
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(orders[0] || null);
   const [drawerOpen, setDrawerOpen] = useState(true);
+  const [showNewOrderForm, setShowNewOrderForm] = useState(false);
+  const [newOrderCustomer, setNewOrderCustomer] = useState<string | null>(null);
+  const [successToast, setSuccessToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (successToast) {
+      const timer = setTimeout(() => setSuccessToast(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [successToast]);
+
+  const showToast = (msg: string) => {
+    setSuccessToast(msg);
+  };
 
   const today = new Date().toISOString().slice(0, 10);
   const currentMonth = new Date().toISOString().slice(0, 7);
@@ -208,9 +237,69 @@ export default function OrdersPage() {
 
   const getCustomer = (customerId: string) => customers.find((c) => c.id === customerId);
 
+  const getShipmentForOrder = (orderId: string) => {
+    return shipments.find((s) => s.orderId === orderId);
+  };
+
   const handleStatusChange = (order: Order, newStatus: Order['status']) => {
     updateOrderStatus(order.id, newStatus);
+
+    if (newStatus === 'shipped') {
+      try {
+        const existingShipment = getShipmentForOrder(order.id);
+        if (!existingShipment) {
+          const newShipment = createShipmentFromOrder(order.id);
+          addShipment(newShipment);
+          showToast(`订单 ${order.orderNo} 已发货，配送单 ${newShipment.vehicleNo} 已自动创建`);
+        } else {
+          showToast(`订单 ${order.orderNo} 已发货，关联配送单 ${existingShipment.vehicleNo}`);
+        }
+      } catch (e) {
+        showToast(`订单 ${order.orderNo} 已发货`);
+      }
+    } else {
+      showToast(`订单 ${order.orderNo} 状态已更新为 ${statusConfig[mapOrderStatus(newStatus)].label}`);
+    }
+
     setSelectedOrder({ ...order, status: newStatus });
+  };
+
+  const handleQuickOrder = (customerId: string) => {
+    setNewOrderCustomer(customerId);
+    setShowNewOrderForm(true);
+  };
+
+  const handleCreateOrder = () => {
+    if (!newOrderCustomer) return;
+    const customer = getCustomer(newOrderCustomer);
+    if (!customer) return;
+
+    const newOrder: Order = {
+      id: `O${Date.now()}`,
+      orderNo: `YD${new Date().toISOString().slice(0, 10).replace(/-/g, '')}${String(orders.length + 1).padStart(3, '0')}`,
+      customerId: newOrderCustomer,
+      createdAt: new Date().toISOString(),
+      deliveryDate: new Date(Date.now() + 86400000).toISOString().slice(0, 10),
+      deliveryAddress: customer.address,
+      totalAmount: 5800,
+      status: 'pending',
+      items: [
+        { id: '1', variety: 'chrysanthemum', grade: 'A', quantity: 500, unitPrice: 8 },
+        { id: '2', variety: 'lily', grade: 'A', quantity: 200, unitPrice: 15 },
+      ],
+      remarks: '快速创建订单',
+    };
+
+    addOrder(newOrder);
+    setShowNewOrderForm(false);
+    setNewOrderCustomer(null);
+    showToast(`订单 ${newOrder.orderNo} 已创建成功`);
+    setSelectedOrder(newOrder);
+    setDrawerOpen(true);
+  };
+
+  const goToLogistics = (orderId: string) => {
+    navigate('/logistics');
   };
 
   const renderOrderCard = (order: Order) => {
@@ -319,7 +408,9 @@ export default function OrdersPage() {
     const cfg = statusConfig[kanbanStatus];
 
     const currentIdx = kanbanOrder.indexOf(kanbanStatus);
-    const timelineSteps = kanbanOrder.slice(0, Math.min(currentIdx + 2, 6));
+    const timelineSteps = kanbanOrder.slice(0, 6);
+
+    const relatedShipment = getShipmentForOrder(selectedOrder.id);
 
     const availableBottomActions: { label: string; next: Order['status']; variant: string; icon: any }[] = [];
     if (selectedOrder.status === 'pending') {
@@ -458,6 +549,44 @@ export default function OrdersPage() {
                 </span>
               </div>
             </div>
+
+            {relatedShipment && (
+              <div className="mt-4 p-4 bg-forest-50/50 rounded-xl border border-forest-200">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-sm font-semibold text-forest-800 flex items-center gap-2">
+                    <Truck className="w-4 h-4" /> 冷链配送单
+                  </h4>
+                  <button
+                    onClick={() => goToLogistics(selectedOrder.id)}
+                    className="text-xs text-forest-600 hover:text-forest-800 flex items-center gap-1"
+                  >
+                    查看物流 <ArrowRight className="w-3 h-3" />
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <span className="text-cream-500">车牌</span>
+                    <p className="font-medium text-forest-900">{relatedShipment.vehicleNo}</p>
+                  </div>
+                  <div>
+                    <span className="text-cream-500">司机</span>
+                    <p className="font-medium text-forest-900">{relatedShipment.driver}</p>
+                  </div>
+                  <div>
+                    <span className="text-cream-500">发车时间</span>
+                    <p className="font-medium text-forest-900">
+                      {relatedShipment.departedAt ? new Date(relatedShipment.departedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-cream-500">状态</span>
+                    <p className="font-medium text-forest-900">
+                      {statusConfig[relatedShipment.status as keyof typeof statusConfig]?.label || relatedShipment.status}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="p-5">
@@ -674,13 +803,20 @@ export default function OrdersPage() {
             {quickCustomers.map((c) => (
               <button
                 key={c.id}
+                onClick={() => handleQuickOrder(c.id)}
                 className="px-3 py-1.5 rounded-lg text-xs font-medium bg-cream-100 text-forest-700 hover:bg-forest-100 hover:text-forest-800 transition-colors border border-cream-200 hover:border-forest-300"
               >
                 {c.name}
               </button>
             ))}
           </div>
-          <button className="btn-primary inline-flex items-center gap-2 px-5 py-2.5">
+          <button
+            onClick={() => {
+              setNewOrderCustomer(null);
+              setShowNewOrderForm(true);
+            }}
+            className="btn-primary inline-flex items-center gap-2 px-5 py-2.5"
+          >
             <Plus className="w-4 h-4" />
             新增订单
           </button>
@@ -861,6 +997,95 @@ export default function OrdersPage() {
           className="fixed inset-0 bg-black/30 z-40 lg:hidden"
           onClick={() => setDrawerOpen(false)}
         />
+      )}
+
+      {successToast && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 animate-fadeInUp">
+          <div className="bg-forest-700 text-white px-5 py-3 rounded-xl shadow-lg flex items-center gap-3">
+            <CheckCircle2 className="w-5 h-5 text-emerald-300" />
+            <span className="text-sm font-medium">{successToast}</span>
+          </div>
+        </div>
+      )}
+
+      {showNewOrderForm && (
+        <>
+          <div
+            className="fixed inset-0 bg-black/40 z-50"
+            onClick={() => setShowNewOrderForm(false)}
+          />
+          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md animate-fadeInUp">
+            <div className="bg-white rounded-2xl shadow-2xl p-6">
+              <div className="flex items-center justify-between mb-5">
+                <h3 className="text-lg font-semibold text-forest-900 flex items-center gap-2">
+                  <Plus className="w-5 h-5 text-forest-600" />
+                  新增订单
+                </h3>
+                <button
+                  onClick={() => setShowNewOrderForm(false)}
+                  className="p-1.5 rounded-lg hover:bg-cream-100 transition-colors"
+                >
+                  <X className="w-5 h-5 text-cream-500" />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="label-base">选择客户</label>
+                  <select
+                    value={newOrderCustomer || ''}
+                    onChange={(e) => setNewOrderCustomer(e.target.value)}
+                    className="input-base"
+                  >
+                    <option value="">请选择客户</option>
+                    {customers
+                      .filter((c) => c.status === 'active')
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name} - {typeNameMap[c.type] || c.type}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                <div className="p-4 bg-cream-50 rounded-xl">
+                  <p className="text-xs text-cream-500 mb-2">快捷订单将创建包含以下商品的订单：</p>
+                  <div className="text-sm space-y-1">
+                    <div className="flex justify-between">
+                      <span>菊花 A级 × 500枝</span>
+                      <span className="font-medium text-forest-800">¥8/枝</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>百合 A级 × 200枝</span>
+                      <span className="font-medium text-forest-800">¥15/枝</span>
+                    </div>
+                    <div className="flex justify-between pt-2 border-t border-cream-200 mt-2">
+                      <span className="font-medium">合计</span>
+                      <span className="font-bold text-chrysanthemum-600">¥5,800</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    onClick={() => setShowNewOrderForm(false)}
+                    className="flex-1 btn-secondary"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={handleCreateOrder}
+                    disabled={!newOrderCustomer}
+                    className="flex-1 btn-primary"
+                  >
+                    <Check className="w-4 h-4" />
+                    确认创建
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
