@@ -1,0 +1,80 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: "Noto Sans SC", "Source Han Sans SC", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, sans-serif;
+  line-height: 1.6;
+  font-weight: 400;
+  color: #1a2e22;
+  background-color: #f7f4ed;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@layer base {
+  h1, h2, h3, h4, h5, h6 {
+    font-family: "Noto Serif SC", "Source Han Serif SC", "SimSun", serif;
+    color: #123222;
+    letter-spacing: 0.02em;
+  }
+}
+
+@layer components {
+  .card-base {
+    @apply bg-white rounded-xl shadow-card border border-cream-200 transition-all duration-300;
+  }
+  .card-hover {
+    @apply hover:shadow-cardHover hover:-translate-y-0.5;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-forest-600 text-white text-sm font-medium rounded-lg hover:bg-forest-700 active:bg-forest-800 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-white text-forest-700 text-sm font-medium rounded-lg border border-forest-200 hover:bg-forest-50 hover:border-forest-300 transition-colors duration-200;
+  }
+  .btn-warn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-warning-600 text-white text-sm font-medium rounded-lg hover:bg-warning-700 transition-colors duration-200;
+  }
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 text-xs font-medium rounded-full;
+  }
+  .input-base {
+    @apply w-full px-3 py-2 text-sm bg-white border border-cream-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-forest-500 focus:border-transparent transition-all;
+  }
+  .label-base {
+    @apply block text-sm font-medium text-forest-800 mb-1.5;
+  }
+  .section-title {
+    @apply text-lg font-semibold text-forest-900 flex items-center gap-2 mb-4;
+  }
+  .table-head {
+    @apply text-xs font-semibold text-forest-700 uppercase tracking-wider bg-cream-100 px-4 py-3 text-left;
+  }
+  .table-cell {
+    @apply px-4 py-3 text-sm text-forest-800 border-b border-cream-200;
+  }
+  .progress-track {
+    @apply h-2 bg-cream-200 rounded-full overflow-hidden;
+  }
+  .progress-bar {
+    @apply h-full bg-forest-500 rounded-full transition-all duration-500;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #f0ebe0;
+}
+::-webkit-scrollbar-thumb {
+  background: #afd3bd;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #7db694;
+}
