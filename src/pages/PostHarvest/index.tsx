@@ -13,6 +13,8 @@ import {
   Check,
   X,
   Snowflake,
+  Warehouse,
+  AlertCircle,
 } from 'lucide-react';
 import {
   PieChart,
@@ -42,7 +44,24 @@ const GRADE_COLORS = {
   defective: '#c0392b',
 };
 
-const STEPS = ['采收登记', '品质分级', '保鲜预冷', '入库存储'];
+const varietyNameMap: Record<string, string> = {
+  chrysanthemum: '菊花',
+  lily: '百合',
+  rose: '玫瑰',
+  carnation: '康乃馨',
+  gladiolus: '唐菖蒲',
+};
+
+const statusTextMap: Record<string, string> = {
+  precooling: '预冷中',
+  stored: '在库',
+  allocated: '已占用',
+  shipped: '已发货',
+  sold: '已售出',
+  expired: '已过期',
+};
+
+const STEPS = ['采收登记', '品质分级', '保鲜预冷', '入库存储', '库存预警'];
 
 interface PreCoolRecord extends Inventory {
   batchId?: string;
@@ -54,12 +73,14 @@ interface HarvestLogRow extends Harvest {
 }
 
 const PRE_COOL_LOCATIONS = ['冷库A-01', '冷库A-02', '冷库A-03', '冷库B-01', '冷库B-02', '冷库C-01'];
-const PRESERVATIVES = ['8-HQC', 'STS', '蔗糖+8-HQC', '专用保鲜剂'];
+const PRESERVATIVES = ['8-HQC', 'STS', '蔗糖溶液', '柠檬酸', '8-HQS', '硝酸银'];
 
 export default function PostHarvestPage() {
-  const { harvests, inventory, batches, fields, addHarvest, addInventoryItems, updateInventoryStatus, getAvailableStock } = useAppStore();
+  const { harvests, inventory, batches, fields, addHarvest, addInventoryItems, updateInventoryStatus, getAvailableStock, getInventoryStats, getInventoryFlowRecords } = useAppStore();
   const [currentStep, setCurrentStep] = useState(1);
   const [formExpanded, setFormExpanded] = useState(true);
+  const [selectedInvVariety, setSelectedInvVariety] = useState<string | null>(null);
+  const [selectedInvGrade, setSelectedInvGrade] = useState<string | null>(null);
 
   const [batchId, setBatchId] = useState('');
   const [harvestedAt, setHarvestedAt] = useState(formatDate(new Date()));
@@ -899,6 +920,212 @@ export default function PostHarvestPage() {
           rowKey="id"
           emptyText="暂无采收记录"
         />
+      </div>
+
+      <div className="card-base p-5 opacity-0 animate-fadeInUp" style={{ animationDelay: '900ms' }}>
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-lg font-bold text-forest-900 font-serif flex items-center gap-2">
+            <Warehouse className="w-5 h-5 text-forest-600" />
+            库存预警视图
+          </h2>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-cream-500">
+              低库存阈值：500枝
+            </span>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-cream-200">
+                  <th className="text-left py-3 px-4 text-cream-500 font-medium text-xs">品种/等级</th>
+                  <th className="text-right py-3 px-4 text-cream-500 font-medium text-xs">可售(枝)</th>
+                  <th className="text-right py-3 px-4 text-cream-500 font-medium text-xs">预冷中(枝)</th>
+                  <th className="text-right py-3 px-4 text-cream-500 font-medium text-xs">已占用(枝)</th>
+                  <th className="text-center py-3 px-4 text-cream-500 font-medium text-xs">状态</th>
+                  <th className="text-center py-3 px-4 text-cream-500 font-medium text-xs">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(() => {
+                  const invStats = getInventoryStats();
+                  return invStats.map((stat, idx) => {
+                    const varietyName = varietyNameMap[stat.variety] || stat.variety;
+                    const total = stat.available + stat.precooling + stat.allocated;
+                    return (
+                      <tr
+                        key={`${stat.variety}-${stat.grade}`}
+                        className={cn(
+                          'border-b border-cream-100 hover:bg-cream-50/50 transition-colors',
+                          selectedInvVariety === stat.variety && selectedInvGrade === stat.grade && 'bg-forest-50/50'
+                        )}
+                      >
+                        <td className="py-3 px-4">
+                          <span className="font-medium text-forest-900">
+                            {varietyName}
+                          </span>
+                          <span
+                            className="ml-2 px-1.5 py-0.5 rounded text-xs font-semibold"
+                            style={{
+                              backgroundColor: stat.grade === 'A' ? '#e8b92320' : stat.grade === 'B' ? '#94a3b820' : '#cd7f3220',
+                              color: stat.grade === 'A' ? '#e8b923' : stat.grade === 'B' ? '#64748b' : '#cd7f32',
+                            }}
+                          >
+                            {stat.grade}级
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <span className={cn(
+                            'font-semibold',
+                            stat.lowStock ? 'text-red-600' : 'text-forest-700'
+                          )}>
+                            {formatNum(stat.available)}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <span className="font-semibold text-sky-600">{formatNum(stat.precooling)}</span>
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <span className="font-semibold text-amber-600">{formatNum(stat.allocated)}</span>
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          {stat.lowStock ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
+                              <AlertCircle className="w-3 h-3" />
+                              低库存
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                              <CheckCircle2 className="w-3 h-3" />
+                              正常
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <button
+                            onClick={() => {
+                              if (selectedInvVariety === stat.variety && selectedInvGrade === stat.grade) {
+                                setSelectedInvVariety(null);
+                                setSelectedInvGrade(null);
+                              } else {
+                                setSelectedInvVariety(stat.variety);
+                                setSelectedInvGrade(stat.grade);
+                              }
+                            }}
+                            className="text-xs text-forest-600 hover:text-forest-800 px-2 py-1 rounded hover:bg-forest-100 transition-colors"
+                          >
+                            {selectedInvVariety === stat.variety && selectedInvGrade === stat.grade
+                              ? '收起详情'
+                              : '查看详情'}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  });
+                })()}
+              </tbody>
+            </table>
+          </div>
+
+          {selectedInvVariety && selectedInvGrade && (
+            <div className="mt-4 p-4 bg-forest-50/30 rounded-xl border border-forest-200">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-semibold text-forest-800">
+                  {varietyNameMap[selectedInvVariety] || selectedInvVariety} {selectedInvGrade}级 - 库存详情
+                </h3>
+                <button
+                  onClick={() => { setSelectedInvVariety(null); setSelectedInvGrade(null); }}
+                  className="text-xs text-cream-500 hover:text-cream-700"
+                >
+                  关闭
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div>
+                  <h4 className="text-xs font-semibold text-forest-700 mb-3 flex items-center gap-1">
+                    <Package className="w-3.5 h-3.5" /> 来源采收批次
+                  </h4>
+                  <div className="space-y-2 max-h-[200px] overflow-y-auto pr-1">
+                    {(() => {
+                      const related = inventory.filter((i) =>
+                        i.variety === selectedInvVariety &&
+                        i.grade === selectedInvGrade
+                      );
+                      if (related.length === 0) {
+                        return <p className="text-xs text-cream-500">暂无库存记录</p>;
+                      }
+                      return related.map((inv) => {
+                        const h = harvests.find((x) => x.id === inv.harvestId);
+                        return (
+                          <div key={inv.id} className="flex items-center justify-between p-3 bg-white rounded-lg border border-cream-200">
+                            <div>
+                              <p className="text-xs font-medium text-forest-800">
+                                批次：{h?.id || inv.harvestId}
+                              </p>
+                              <p className="text-[10px] text-cream-500 mt-0.5">
+                                入库：{inv.preCooledAt.slice(0, 10)} · 库位：{inv.location}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-xs font-semibold text-forest-700">{formatNum(inv.quantity)}枝</p>
+                              <span className={cn(
+                                'text-[10px] px-1.5 py-0.5 rounded',
+                                inv.status === 'stored' ? 'bg-green-100 text-green-700' :
+                                inv.status === 'precooling' ? 'bg-sky-100 text-sky-700' :
+                                inv.status === 'allocated' ? 'bg-amber-100 text-amber-700' :
+                                'bg-gray-100 text-gray-600'
+                              )}>
+                                {inv.status === 'stored' ? '在库' :
+                                 inv.status === 'precooling' ? '预冷中' :
+                                 inv.status === 'allocated' ? '已占用' :
+                                 inv.status}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                </div>
+
+                <div>
+                  <h4 className="text-xs font-semibold text-forest-700 mb-3 flex items-center gap-1">
+                    <Clock className="w-3.5 h-3.5" /> 最近流转记录
+                  </h4>
+                  <div className="space-y-2 max-h-[200px] overflow-y-auto pr-1">
+                    {(() => {
+                      const records = getInventoryFlowRecords(selectedInvVariety, selectedInvGrade as any).slice(0, 10);
+                      if (records.length === 0) {
+                        return <p className="text-xs text-cream-500">暂无流转记录</p>;
+                      }
+                      return records.map((record) => (
+                        <div key={record.id} className="flex items-start gap-2 p-3 bg-white rounded-lg border border-cream-200">
+                          <div className="w-2 h-2 rounded-full bg-forest-500 mt-1.5 flex-shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium text-forest-800">
+                              {statusTextMap[record.fromStatus] || record.fromStatus} → {statusTextMap[record.toStatus] || record.toStatus}
+                            </p>
+                            <p className="text-[10px] text-cream-500 mt-0.5">
+                              {record.quantity}枝 · {new Date(record.operatedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                            </p>
+                            {record.orderId && (
+                              <p className="text-[10px] text-forest-600 mt-0.5">
+                                关联订单：{record.orderId}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {successToast && (

@@ -9,6 +9,7 @@ import {
   CreditCard,
   FileText,
   AlertCircle,
+  AlertTriangle,
   RefreshCw,
   Trash2,
   Eye,
@@ -124,6 +125,7 @@ export default function CustomersPage() {
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerWithExtra | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [successToast, setSuccessToast] = useState<string | null>(null);
+  const [errorToast, setErrorToast] = useState<string | null>(null);
   const [creditModalOpen, setCreditModalOpen] = useState(false);
   const [reminderModalOpen, setReminderModalOpen] = useState(false);
   const [orderModalOpen, setOrderModalOpen] = useState(false);
@@ -142,7 +144,20 @@ export default function CustomersPage() {
     }
   }, [successToast]);
 
-  const showToast = (msg: string) => setSuccessToast(msg);
+  useEffect(() => {
+    if (errorToast) {
+      const timer = setTimeout(() => setErrorToast(null), 3500);
+      return () => clearTimeout(timer);
+    }
+  }, [errorToast]);
+
+  const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
+    if (type === 'error') {
+      setErrorToast(msg);
+    } else {
+      setSuccessToast(msg);
+    }
+  };
   const forceRefresh = () => setRefreshKey((k) => k + 1);
 
   const currentMonth = new Date().toISOString().slice(0, 7);
@@ -278,6 +293,15 @@ export default function CustomersPage() {
       showToast('请输入有效的订单金额');
       return;
     }
+    const remainingCredit = selectedCustomer.creditLimit - selectedCustomer.usedCredit;
+    if (amount > remainingCredit) {
+      showToast(
+        `客户额度不足！剩余额度 ${formatMoney(remainingCredit)}，订单金额 ${formatMoney(amount)}，超出 ${formatMoney(amount - remainingCredit)}`,
+        'error'
+      );
+      return;
+    }
+
     const newOrder: Order = {
       id: `O${Date.now()}`,
       orderNo: `DD${new Date().toISOString().slice(2, 10).replace(/-/g, '')}${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`,
@@ -300,12 +324,16 @@ export default function CustomersPage() {
       phone: selectedCustomer.phone,
       remark: newOrderRemark,
     };
-    addOrder(newOrder);
-    setOrderModalOpen(false);
-    setNewOrderAmount('');
-    setNewOrderRemark('');
-    forceRefresh();
-    showToast(`订单 ${newOrder.orderNo} 已创建，客户：${selectedCustomer.name}`);
+    const result = addOrder(newOrder);
+    if (result.success && result.order) {
+      setOrderModalOpen(false);
+      setNewOrderAmount('');
+      setNewOrderRemark('');
+      forceRefresh();
+      showToast(`订单 ${newOrder.orderNo} 已创建，客户：${selectedCustomer.name}，占用额度 ${formatMoney(amount)}`);
+    } else {
+      showToast(result.message, 'error');
+    }
   };
 
   const handleUpdateCredit = () => {
@@ -1405,6 +1433,15 @@ export default function CustomersPage() {
           <div className="bg-forest-700 text-white px-5 py-3 rounded-xl shadow-lg flex items-center gap-3">
             <CheckCircle2 className="w-5 h-5 text-emerald-300" />
             <span className="text-sm font-medium">{successToast}</span>
+          </div>
+        </div>
+      )}
+
+      {errorToast && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] animate-fadeInUp">
+          <div className="bg-red-600 text-white px-5 py-3 rounded-xl shadow-lg flex items-center gap-3">
+            <AlertTriangle className="w-5 h-5 text-red-200" />
+            <span className="text-sm font-medium">{errorToast}</span>
           </div>
         </div>
       )}

@@ -135,7 +135,7 @@ const PIE_COLORS = ['#059669', '#0ea5e9', '#f59e0b'];
 
 export default function OrdersPage() {
   const navigate = useNavigate();
-  const { orders, customers, shipments, updateOrderStatus, addShipment, createShipmentFromOrder, addOrder, getAvailableStock } = useAppStore();
+  const { orders, customers, shipments, inventory, updateOrderStatus, addShipment, createShipmentFromOrder, addOrder, getAvailableStock } = useAppStore();
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(orders[0] || null);
   const [drawerOpen, setDrawerOpen] = useState(true);
   const [showNewOrderForm, setShowNewOrderForm] = useState(false);
@@ -244,26 +244,16 @@ export default function OrdersPage() {
   };
 
   const handleStatusChange = (order: Order, newStatus: Order['status']) => {
-    if (newStatus === 'picking') {
-      const stockIssues: string[] = [];
-      order.items.forEach((item) => {
-        const available = getAvailableStock(item.variety, item.grade);
-        if (available < item.quantity) {
-          stockIssues.push(
-            `${varietyNameMap[item.variety] || item.variety} ${item.grade}级 需求${formatNum(item.quantity)}枝，可用仅${formatNum(available)}枝，缺${formatNum(item.quantity - available)}枝`
-          );
-        }
-      });
-      if (stockIssues.length > 0) {
-        showToast(
-          `库存不足！${stockIssues.join('；')}`,
-          'error'
-        );
-        return;
-      }
+    const result = updateOrderStatus(order.id, newStatus);
+
+    if (!result) {
+      showToast('订单不存在', 'error');
+      return;
     }
 
-    updateOrderStatus(order.id, newStatus);
+    if (newStatus === 'picking' && result.status === order.status) {
+      return;
+    }
 
     if (newStatus === 'shipped') {
       try {
@@ -282,7 +272,7 @@ export default function OrdersPage() {
       showToast(`订单 ${order.orderNo} 状态已更新为 ${statusConfig[mapOrderStatus(newStatus)].label}`);
     }
 
-    setSelectedOrder({ ...order, status: newStatus });
+    setSelectedOrder(result);
   };
 
   const handleQuickOrder = (customerId: string) => {
@@ -311,12 +301,16 @@ export default function OrdersPage() {
       remarks: '快速创建订单',
     };
 
-    addOrder(newOrder);
-    setShowNewOrderForm(false);
-    setNewOrderCustomer(null);
-    showToast(`订单 ${newOrder.orderNo} 已创建成功`);
-    setSelectedOrder(newOrder);
-    setDrawerOpen(true);
+    const result = addOrder(newOrder);
+    if (result.success && result.order) {
+      setShowNewOrderForm(false);
+      setNewOrderCustomer(null);
+      showToast(`订单 ${newOrder.orderNo} 已创建成功`);
+      setSelectedOrder(result.order);
+      setDrawerOpen(true);
+    } else {
+      showToast(result.message, 'error');
+    }
   };
 
   const goToLogistics = (orderId: string) => {
@@ -637,9 +631,85 @@ export default function OrdersPage() {
                     </p>
                   </div>
                 </div>
+
+                {selectedOrder.signedAt && (
+                  <div className="mt-3 pt-3 border-t border-forest-200">
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <span className="text-cream-500">签收时间</span>
+                        <p className="font-medium text-forest-900">
+                          {new Date(selectedOrder.signedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-cream-500">签收人</span>
+                        <p className="font-medium text-forest-900">{selectedOrder.signedBy}</p>
+                      </div>
+                    </div>
+                    {selectedOrder.hasTempAnomaly && (
+                      <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                        <div className="flex items-start gap-2">
+                          <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+                          <div className="flex-1">
+                            <p className="text-xs font-semibold text-red-700 mb-1">温湿度异常</p>
+                            <p className="text-[11px] text-red-600 mb-2">该订单冷链运输过程中存在温湿度超标情况</p>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => handleStatusChange(selectedOrder, 'returned')}
+                                className="px-2.5 py-1 bg-red-600 text-white text-[10px] font-medium rounded hover:bg-red-700 transition-colors"
+                              >
+                                申请退货
+                              </button>
+                              <button
+                                onClick={() => handleStatusChange(selectedOrder, 'cancelled')}
+                                className="px-2.5 py-1 bg-gray-100 text-gray-700 text-[10px] font-medium rounded hover:bg-gray-200 transition-colors"
+                              >
+                                取消订单
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
+
+          {selectedOrder.allocatedInventoryIds && selectedOrder.allocatedInventoryIds.length > 0 && (
+            <div className="p-5 border-b border-cream-200">
+              <h3 className="text-sm font-semibold text-forest-700 mb-3 flex items-center gap-2">
+                <Package className="w-4 h-4" /> 库存占用明细
+              </h3>
+              <div className="space-y-2">
+                {(() => {
+                  const allocated = inventory.filter((i) =>
+                    selectedOrder.allocatedInventoryIds?.includes(i.id)
+                  );
+                  if (allocated.length === 0) {
+                    return <p className="text-xs text-cream-500">暂无库存占用记录</p>;
+                  }
+                  return allocated.map((inv) => (
+                    <div key={inv.id} className="flex items-center justify-between p-3 bg-amber-50 rounded-lg border border-amber-200">
+                      <div>
+                        <p className="text-sm font-medium text-forest-900">
+                          {varietyNameMap[inv.variety] || inv.variety} {inv.grade}级
+                        </p>
+                        <p className="text-[10px] text-cream-500 mt-0.5">
+                          批次：{inv.harvestId} · 库位：{inv.location}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-semibold text-amber-700">{formatNum(inv.quantity)}枝</p>
+                        <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded">已占用</span>
+                      </div>
+                    </div>
+                  ));
+                })()}
+              </div>
+            </div>
+          )}
 
           <div className="p-5">
             <h3 className="text-sm font-semibold text-forest-700 mb-4 flex items-center gap-2">

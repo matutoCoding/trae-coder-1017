@@ -3,6 +3,7 @@ import type {
   PlantingBatch,
   Harvest,
   Inventory,
+  InventoryFlowRecord,
   Customer,
   Order,
   Shipment,
@@ -52,6 +53,7 @@ interface AppState {
   batches: PlantingBatch[];
   harvests: Harvest[];
   inventory: Inventory[];
+  inventoryFlow: InventoryFlowRecord[];
   customers: Customer[];
   orders: Order[];
   shipments: Shipment[];
@@ -66,16 +68,33 @@ interface AppState {
   updateFieldStatus: (id: string, status: Field['status']) => void;
   addHarvest: (harvest: Harvest) => void;
   addInventoryItems: (items: Inventory[]) => void;
-  updateInventoryStatus: (id: string, status: Inventory['status']) => Inventory | null;
+  updateInventoryStatus: (id: string, status: Inventory['status'], orderId?: string) => Inventory | null;
   getAvailableStock: (variety: string, grade: string) => number;
-  updateOrderStatus: (id: string, status: Order['status']) => void;
-  addOrder: (order: Order) => void;
+  allocateStock: (orderId: string, items: Order['items']) => { success: boolean; message: string; allocatedIds?: string[] };
+  releaseStock: (orderId: string) => boolean;
+  getInventoryStats: () => Array<{
+    variety: string;
+    grade: string;
+    available: number;
+    precooling: number;
+    allocated: number;
+    lowStock: boolean;
+  }>;
+  getInventoryFlowRecords: (variety?: string, grade?: string) => InventoryFlowRecord[];
+  addInventoryFlowRecord: (record: Omit<InventoryFlowRecord, 'id' | 'operatedAt'>) => void;
+  updateOrderStatus: (id: string, status: Order['status']) => Order | null;
+  addOrder: (order: Order) => { success: boolean; message: string; order?: Order };
   addReturn: (returnItem: Return) => void;
   addShipment: (shipment: Shipment) => void;
   createShipmentFromOrder: (orderId: string) => Shipment;
   getShipmentForOrder: (orderId: string) => Shipment | undefined;
   dispatchShipment: (shipmentId: string) => Shipment | null;
   batchDispatchShipments: (shipmentIds: string[], vehicleNo: string, driver: string) => Shipment[];
+  completeShipment: (
+    shipmentId: string,
+    signedBy: string,
+    signRemark?: string,
+  ) => { success: boolean; hasAnomaly: boolean; shipment?: Shipment };
   updateShipmentStatus: (
     id: string,
     status: Shipment['status'],
@@ -116,6 +135,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   batches: initialBatches,
   harvests: initialHarvests,
   inventory: initialInventory,
+  inventoryFlow: [],
   customers: initialCustomers,
   orders: initialOrders,
   shipments: initialShipments,
@@ -126,6 +146,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   festivalPredictions,
   warningRecords: [],
   paymentReminders: [],
+
+  addInventoryFlowRecord: (record: Omit<InventoryFlowRecord, 'id' | 'operatedAt'>) => {
+    const flowRecord: InventoryFlowRecord = {
+      ...record,
+      id: `IF-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      operatedAt: new Date().toISOString(),
+    };
+    set((state) => ({
+      inventoryFlow: [flowRecord, ...state.inventoryFlow],
+    }));
+  },
 
   updateFieldStatus: (id, status) =>
     set((state) => ({
@@ -144,17 +175,76 @@ export const useAppStore = create<AppState>((set, get) => ({
       inventory: [...state.inventory, ...items],
     })),
 
-  updateOrderStatus: (id, status) =>
+  updateOrderStatus: (id, status) => {
+    const { orders, customers, allocateStock, releaseStock } = get();
+    const order = orders.find((o) => o.id === id);
+    if (!order) return null;
+
+    const oldStatus = order.status;
+    let allocatedIds: string[] | undefined;
+
+    if (status === 'picking' && oldStatus !== 'picking') {
+      const result = allocateStock(id, order.items);
+      if (!result.success) {
+        return { ...order, status: oldStatus } as any;
+      }
+      allocatedIds = result.allocatedIds;
+    }
+
+    if ((status === 'cancelled' || status === 'returned') && (oldStatus === 'picking' || oldStatus === 'confirmed' || oldStatus === 'pending')) {
+      releaseStock(id);
+      const customer = customers.find((c) => c.id === order.customerId);
+      if (customer) {
+        set((state) => ({
+          customers: state.customers.map((c) =>
+            c.id === order.customerId
+              ? { ...c, usedCredit: Math.max(0, c.usedCredit - order.totalAmount) }
+              : c
+          ),
+        }));
+      }
+    }
+
+    const updated: Order = { ...order, status, allocatedInventoryIds: allocatedIds || order.allocatedInventoryIds };
+
     set((state) => ({
       orders: state.orders.map((o) =>
-        o.id === id ? { ...o, status } : o,
+        o.id === id ? updated : o,
       ),
-    })),
+    }));
 
-  addOrder: (order) =>
-    set((state) => ({
-      orders: [...state.orders, order],
-    })),
+    return updated;
+  },
+
+  addOrder: (order) => {
+    const { customers } = get();
+    const customer = customers.find((c) => c.id === order.customerId);
+
+    if (customer) {
+      const remainingCredit = customer.creditLimit - customer.usedCredit;
+      if (order.totalAmount > remainingCredit) {
+        return {
+          success: false,
+          message: `客户额度不足！剩余额度 ${remainingCredit.toLocaleString()} 元，订单金额 ${order.totalAmount.toLocaleString()} 元，超出 ${(order.totalAmount - remainingCredit).toLocaleString()} 元`,
+        };
+      }
+
+      set((state) => ({
+        customers: state.customers.map((c) =>
+          c.id === order.customerId
+            ? { ...c, usedCredit: c.usedCredit + order.totalAmount }
+            : c
+        ),
+        orders: [...state.orders, order],
+      }));
+    } else {
+      set((state) => ({
+        orders: [...state.orders, order],
+      }));
+    }
+
+    return { success: true, message: '订单创建成功', order };
+  },
 
   addReturn: (returnItem) =>
     set((state) => ({
@@ -254,6 +344,45 @@ export const useAppStore = create<AppState>((set, get) => ({
       ),
     })),
 
+  completeShipment: (shipmentId, signedBy, signRemark) => {
+    const { shipments, orders } = get();
+    const shipment = shipments.find((s) => s.id === shipmentId);
+    if (!shipment) return { success: false, hasAnomaly: false };
+
+    const hasTempAnomaly = shipment.tempLogs.some(
+      (log) => log.temperature > 4 || log.temperature < 0
+    );
+
+    const now = new Date().toISOString();
+    const updatedShipment: Shipment = {
+      ...shipment,
+      status: 'completed',
+      arrivedAt: shipment.arrivedAt || now,
+      signedAt: now,
+      signedBy,
+      hasTempAnomaly,
+      signRemark,
+    };
+
+    set((state) => ({
+      shipments: state.shipments.map((s) =>
+        s.id === shipmentId ? updatedShipment : s,
+      ),
+      orders: state.orders.map((o) =>
+        o.id === shipment.orderId
+          ? {
+              ...o,
+              signedAt: now,
+              signedBy,
+              hasTempAnomaly,
+            }
+          : o,
+      ),
+    }));
+
+    return { success: true, hasAnomaly: hasTempAnomaly, shipment: updatedShipment };
+  },
+
   updateCustomerCredit: (customerId, newLimit, remark) => {
     const customer = get().customers.find((c) => c.id === customerId);
     if (!customer) return null;
@@ -337,11 +466,29 @@ export const useAppStore = create<AppState>((set, get) => ({
     return updated;
   },
 
-  updateInventoryStatus: (id, status) => {
-    const inventory = get().inventory.find((i) => i.id === id);
-    if (!inventory) return null;
+  updateInventoryStatus: (id, status, orderId) => {
+    const { inventory, addInventoryFlowRecord } = get();
+    const inv = inventory.find((i) => i.id === id);
+    if (!inv) return null;
 
-    const updated: Inventory = { ...inventory, status };
+    const fromStatus = inv.status;
+    const updated: Inventory = {
+      ...inv,
+      status,
+      orderId: orderId || inv.orderId,
+      updatedAt: new Date().toISOString(),
+    };
+
+    addInventoryFlowRecord({
+      inventoryId: id,
+      harvestId: inv.harvestId,
+      variety: inv.variety,
+      grade: inv.grade,
+      quantity: inv.quantity,
+      fromStatus,
+      toStatus: status,
+      orderId: orderId || inv.orderId,
+    });
 
     set((state) => ({
       inventory: state.inventory.map((i) =>
@@ -357,9 +504,102 @@ export const useAppStore = create<AppState>((set, get) => ({
       .inventory.filter((i) =>
         i.variety === variety &&
         i.grade === grade &&
-        (i.status === 'stored' || i.status === 'precooling')
+        i.status === 'stored'
       )
       .reduce((sum, i) => sum + i.quantity, 0);
+  },
+
+  allocateStock: (orderId, items) => {
+    const { inventory, updateInventoryStatus } = get();
+    const allocatedIds: string[] = [];
+
+    for (const item of items) {
+      const available = inventory.filter((i) =>
+        i.variety === item.variety &&
+        i.grade === item.grade &&
+        i.status === 'stored'
+      ).sort((a, b) => new Date(a.preCooledAt).getTime() - new Date(b.preCooledAt).getTime());
+
+      let remaining = item.quantity;
+      for (const inv of available) {
+        if (remaining <= 0) break;
+        if (inv.quantity <= remaining) {
+          updateInventoryStatus(inv.id, 'allocated', orderId);
+          allocatedIds.push(inv.id);
+          remaining -= inv.quantity;
+        } else {
+          const splitId = `INV-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          const splitInv: Inventory = {
+            ...inv,
+            id: splitId,
+            quantity: remaining,
+            updatedAt: new Date().toISOString(),
+          };
+          const remainingInv: Inventory = {
+            ...inv,
+            quantity: inv.quantity - remaining,
+            updatedAt: new Date().toISOString(),
+          };
+          set((state) => ({
+            inventory: state.inventory.map((i) =>
+              i.id === inv.id ? remainingInv : i
+            ).concat(splitInv),
+          }));
+          updateInventoryStatus(splitId, 'allocated', orderId);
+          allocatedIds.push(splitId);
+          remaining = 0;
+        }
+      }
+
+      if (remaining > 0) {
+        return { success: false, message: `${item.variety} ${item.grade}级 库存不足，缺${remaining}枝` };
+      }
+    }
+
+    return { success: true, message: '库存分配成功', allocatedIds };
+  },
+
+  releaseStock: (orderId) => {
+    const { inventory, updateInventoryStatus } = get();
+    const allocated = inventory.filter((i) => i.orderId === orderId && i.status === 'allocated');
+
+    if (allocated.length === 0) return false;
+
+    allocated.forEach((inv) => {
+      updateInventoryStatus(inv.id, 'stored', undefined);
+    });
+
+    return true;
+  },
+
+  getInventoryStats: () => {
+    const { inventory } = get();
+    const stats: Record<string, { variety: string; grade: string; available: number; precooling: number; allocated: number }> = {};
+
+    inventory.forEach((inv) => {
+      const key = `${inv.variety}-${inv.grade}`;
+      if (!stats[key]) {
+        stats[key] = { variety: inv.variety, grade: inv.grade, available: 0, precooling: 0, allocated: 0 };
+      }
+      if (inv.status === 'stored') stats[key].available += inv.quantity;
+      else if (inv.status === 'precooling') stats[key].precooling += inv.quantity;
+      else if (inv.status === 'allocated') stats[key].allocated += inv.quantity;
+    });
+
+    const LOW_STOCK_THRESHOLD = 500;
+    return Object.values(stats).map((s) => ({
+      ...s,
+      lowStock: s.available < LOW_STOCK_THRESHOLD,
+    }));
+  },
+
+  getInventoryFlowRecords: (variety, grade) => {
+    const { inventoryFlow } = get();
+    return inventoryFlow.filter((r) => {
+      const matchVariety = !variety || r.variety === variety;
+      const matchGrade = !grade || r.grade === grade;
+      return matchVariety && matchGrade;
+    });
   },
 
   resolveWarning: (shipmentId, resolution, handler, remark) => {

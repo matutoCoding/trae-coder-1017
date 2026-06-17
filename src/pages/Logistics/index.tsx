@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Truck,
   Thermometer,
@@ -112,6 +112,7 @@ const calcDuration = (start?: string, end?: string) => {
 
 export default function LogisticsPage() {
   const location = useLocation();
+  const navigate = useNavigate();
   const {
     shipments,
     orders,
@@ -122,6 +123,7 @@ export default function LogisticsPage() {
     warningRecords,
     getShipmentForOrder,
     batchDispatchShipments,
+    completeShipment,
   } = useAppStore();
   const [selectedShipment, setSelectedShipment] = useState<Shipment | null>(
     shipments.find((s) => s.status === 'in_transit' || s.status === 'departed') || shipments[0] || null,
@@ -133,6 +135,7 @@ export default function LogisticsPage() {
   const [warningShipment, setWarningShipment] = useState<Shipment | null>(null);
   const [showWarningPanel, setShowWarningPanel] = useState(false);
   const [successToast, setSuccessToast] = useState<string | null>(null);
+  const [errorToast, setErrorToast] = useState<string | null>(null);
   const [contactShipment, setContactShipment] = useState<Shipment | null>(null);
   const [showContactPanel, setShowContactPanel] = useState(false);
   const [resolution, setResolution] = useState('通知司机');
@@ -146,6 +149,10 @@ export default function LogisticsPage() {
   const [selectedPendingIds, setSelectedPendingIds] = useState<string[]>([]);
   const [batchVehicle, setBatchVehicle] = useState('');
   const [batchDriver, setBatchDriver] = useState('');
+  const [showSignModal, setShowSignModal] = useState(false);
+  const [signShipment, setSignShipment] = useState<Shipment | null>(null);
+  const [signBy, setSignBy] = useState('');
+  const [signRemark, setSignRemark] = useState('');
 
   useEffect(() => {
     const state = location.state as { orderId?: string } | null;
@@ -167,8 +174,46 @@ export default function LogisticsPage() {
     }
   }, [successToast]);
 
-  const showToast = (msg: string) => {
-    setSuccessToast(msg);
+  useEffect(() => {
+    if (errorToast) {
+      const timer = setTimeout(() => setErrorToast(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [errorToast]);
+
+  const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
+    if (type === 'error') {
+      setErrorToast(msg);
+    } else {
+      setSuccessToast(msg);
+    }
+  };
+
+  const openSignModal = (shipment: Shipment) => {
+    setSignShipment(shipment);
+    setSignBy('');
+    setSignRemark('');
+    setShowSignModal(true);
+  };
+
+  const handleSign = () => {
+    if (!signShipment || !signBy.trim()) {
+      showToast('请输入签收人姓名', 'error');
+      return;
+    }
+
+    const result = completeShipment(signShipment.id, signBy.trim(), signRemark.trim());
+    if (result.success && result.shipment) {
+      setShowSignModal(false);
+      setSelectedShipment(result.shipment);
+      if (result.hasAnomaly) {
+        showToast('签收完成！注意：该单存在温湿度异常，请及时处理售后');
+      } else {
+        showToast(`配送单 ${signShipment.vehicleNo} 已签收完成`);
+      }
+    } else {
+      showToast('签收失败', 'error');
+    }
   };
 
   const today = new Date().toISOString().slice(0, 10);
@@ -715,6 +760,18 @@ export default function LogisticsPage() {
               派单
             </button>
           )}
+          {(s.status === 'departed' || s.status === 'in_transit' || s.status === 'arrived') && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                openSignModal(s);
+              }}
+              className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 transition-colors"
+            >
+              <Check className="w-3 h-3" />
+              签收
+            </button>
+          )}
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -723,6 +780,8 @@ export default function LogisticsPage() {
             className={cn(
               'flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors',
               s.status === 'pending'
+                ? 'bg-cream-100 text-forest-700 hover:bg-cream-200'
+                : s.status === 'departed' || s.status === 'in_transit' || s.status === 'arrived'
                 ? 'bg-cream-100 text-forest-700 hover:bg-cream-200'
                 : 'flex-1 bg-forest-50 text-forest-700 hover:bg-forest-100',
             )}
@@ -1287,24 +1346,67 @@ export default function LogisticsPage() {
                 <div className="space-y-2.5 text-sm">
                   <div className="flex items-center gap-2">
                     <span className="text-cream-500 w-20 flex-shrink-0">签收人</span>
-                    <span className="font-medium text-forest-900">{customer?.contact || '已签收'}</span>
+                    <span className="font-medium text-forest-900">{selectedShipment.signedBy || customer?.contact || '已签收'}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-cream-500 w-20 flex-shrink-0">签收时间</span>
-                    <span className="text-forest-800">{formatTime(selectedShipment.arrivedAt)}</span>
+                    <span className="text-forest-800">{selectedShipment.signedAt ? formatTime(selectedShipment.signedAt) : formatTime(selectedShipment.arrivedAt)}</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-cream-500 w-20 flex-shrink-0">签收状态</span>
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-xs font-medium">
-                      <Check className="w-3 h-3" />
-                      正常签收
-                    </span>
+                    <span className="text-cream-500 w-20 flex-shrink-0">温湿度</span>
+                    {selectedShipment.hasTempAnomaly ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-50 text-red-700 text-xs font-medium">
+                        <AlertTriangle className="w-3 h-3" />
+                        存在异常
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-xs font-medium">
+                        <Check className="w-3 h-3" />
+                        正常
+                      </span>
+                    )}
                   </div>
+                  {selectedShipment.signRemark && (
+                    <div className="flex items-start gap-2">
+                      <span className="text-cream-500 w-20 flex-shrink-0 mt-0.5">签收备注</span>
+                      <span className="text-forest-800">{selectedShipment.signRemark}</span>
+                    </div>
+                  )}
+                  {selectedShipment.hasTempAnomaly && (
+                    <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                      <div className="flex items-start gap-2">
+                        <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 flex-shrink-0" />
+                        <div className="flex-1">
+                          <p className="text-xs font-semibold text-red-800 mb-1">温湿度异常</p>
+                          <p className="text-[11px] text-red-600 mb-2">该订单冷链运输过程中存在温湿度超标情况，建议启动售后处理</p>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => {
+                                setDrawerOpen(false);
+                                navigate('/customers');
+                              }}
+                              className="px-3 py-1.5 bg-red-600 text-white text-[11px] font-medium rounded hover:bg-red-700 transition-colors"
+                            >
+                              售后处理
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="rounded-xl bg-cream-50/70 border border-dashed border-cream-200 py-8 text-center">
                   <Clock className="w-8 h-8 mx-auto mb-2 text-cream-300" />
                   <p className="text-sm text-cream-500">暂未签收</p>
+                  {(selectedShipment.status === 'departed' || selectedShipment.status === 'in_transit' || selectedShipment.status === 'arrived') && (
+                    <button
+                      onClick={() => openSignModal(selectedShipment)}
+                      className="mt-3 px-4 py-1.5 bg-forest-600 text-white text-xs font-medium rounded-lg hover:bg-forest-700 transition-colors"
+                    >
+                      立即签收
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -1371,9 +1473,9 @@ export default function LogisticsPage() {
                 确认到达
               </button>
             ) : null}
-            {selectedShipment.status === 'arrived' ? (
+            {(selectedShipment.status === 'departed' || selectedShipment.status === 'in_transit' || selectedShipment.status === 'arrived') ? (
               <button
-                onClick={() => updateShipmentStatus(selectedShipment.id, 'completed', selectedShipment.arrivedAt)}
+                onClick={() => openSignModal(selectedShipment)}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-forest-600 text-white font-medium text-sm hover:bg-forest-700 transition-all shadow-sm hover:shadow-md"
               >
                 <CheckCircle2 className="w-4 h-4" />
@@ -1826,6 +1928,117 @@ export default function LogisticsPage() {
                   <Send className="w-4 h-4" />
                   发送
                 </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {showSignModal && signShipment && (
+        <>
+          <div
+            className="fixed inset-0 bg-black/40 z-50"
+            onClick={() => setShowSignModal(false)}
+          />
+          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-lg animate-fadeInUp">
+            <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
+              <div className="bg-gradient-to-r from-forest-600 to-forest-700 px-6 py-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
+                      <CheckCircle2 className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-semibold text-white">确认签收</h3>
+                      <p className="text-sm text-forest-100">配送单 {signShipment.vehicleNo}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowSignModal(false)}
+                    className="p-1.5 rounded-lg hover:bg-white/20 transition-colors"
+                  >
+                    <X className="w-5 h-5 text-white" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-6 space-y-5">
+                <div className="p-4 bg-cream-50 rounded-xl border border-cream-200">
+                  <h4 className="text-sm font-semibold text-forest-800 mb-3 flex items-center gap-2">
+                    <Package className="w-4 h-4" /> 配送信息
+                  </h4>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <span className="text-cream-500">车牌</span>
+                      <p className="font-medium text-forest-900">{signShipment.vehicleNo}</p>
+                    </div>
+                    <div>
+                      <span className="text-cream-500">司机</span>
+                      <p className="font-medium text-forest-900">{signShipment.driver}</p>
+                    </div>
+                    <div>
+                      <span className="text-cream-500">发车时间</span>
+                      <p className="font-medium text-forest-900">{formatTime(signShipment.departedAt)}</p>
+                    </div>
+                    <div>
+                      <span className="text-cream-500">当前温度</span>
+                      <p className={cn('font-medium', getTempColor(getCurrentTemp(signShipment)))}>
+                        {getCurrentTemp(signShipment).toFixed(1)}℃
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="label-base">签收人 <span className="text-red-500">*</span></label>
+                  <input
+                    type="text"
+                    value={signBy}
+                    onChange={(e) => setSignBy(e.target.value)}
+                    placeholder="请输入签收人姓名"
+                    className="input-base"
+                    autoFocus
+                  />
+                </div>
+
+                <div>
+                  <label className="label-base">签收备注</label>
+                  <textarea
+                    value={signRemark}
+                    onChange={(e) => setSignRemark(e.target.value)}
+                    placeholder="请输入签收备注（可选）"
+                    className="input-base min-h-[80px] resize-none"
+                  />
+                </div>
+
+                {signShipment.tempLogs.some((l) => l.temperature > 4 || l.temperature < 0) && (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs font-semibold text-amber-800 mb-1">温湿度异常提醒</p>
+                        <p className="text-[11px] text-amber-700">该订单运输过程中存在温湿度超标情况，签收后将自动标记为异常单</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    onClick={() => setShowSignModal(false)}
+                    className="flex-1 btn-secondary"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={handleSign}
+                    disabled={!signBy.trim()}
+                    className="flex-1 btn-primary"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    确认签收
+                  </button>
+                </div>
               </div>
             </div>
           </div>

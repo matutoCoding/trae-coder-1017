@@ -77,6 +77,22 @@ export interface Inventory {
   preservative: string;
   location: string;
   status: InventoryStatus;
+  orderId?: string;
+  updatedAt?: string;
+}
+
+export interface InventoryFlowRecord {
+  id: string;
+  inventoryId: string;
+  harvestId: string;
+  variety: string;
+  grade: FlowerGrade;
+  quantity: number;
+  fromStatus: InventoryStatus;
+  toStatus: InventoryStatus;
+  orderId?: string;
+  operatedAt: string;
+  operator?: string;
 }
 
 export interface Customer {
@@ -120,6 +136,10 @@ export interface Order {
   items: OrderItem[];
   remarks?: string;
   remark?: string;
+  signedAt?: string;
+  signedBy?: string;
+  hasTempAnomaly?: boolean;
+  allocatedInventoryIds?: string[];
 }
 
 export interface TempLog {
@@ -140,6 +160,10 @@ export interface Shipment {
   status: ShipmentStatus;
   tempLogs: TempLog[];
   route?: string;
+  signedAt?: string;
+  signedBy?: string;
+  hasTempAnomaly?: boolean;
+  signRemark?: string;
 }
 
 export interface Return {
