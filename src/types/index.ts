@@ -172,6 +172,15 @@ export interface LossData {
   returns: number;
 }
 
+export interface PaymentReminder {
+  id: string;
+  customerId: string;
+  amount: number;
+  message: string;
+  sentAt: string;
+  status: 'pending' | 'sent' | 'paid';
+}
+
 export interface MonthlyReport {
   month: string;
   production: number;

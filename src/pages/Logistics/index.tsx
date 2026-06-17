@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   Truck,
   Thermometer,
@@ -38,6 +39,7 @@ import { useAppStore } from '@/store';
 import { StatCard } from '@/components/ui/StatCard';
 import { DataTable } from '@/components/ui/DataTable';
 import { cn } from '@/lib/utils';
+import { formatMoney } from '@/utils/format';
 import type { Shipment, Order, TempLog, ShipmentStatus } from '@/types';
 
 const statusConfig: Record<
@@ -109,6 +111,7 @@ const calcDuration = (start?: string, end?: string) => {
 };
 
 export default function LogisticsPage() {
+  const location = useLocation();
   const {
     shipments,
     orders,
@@ -117,6 +120,8 @@ export default function LogisticsPage() {
     dispatchShipment,
     resolveWarning,
     warningRecords,
+    getShipmentForOrder,
+    batchDispatchShipments,
   } = useAppStore();
   const [selectedShipment, setSelectedShipment] = useState<Shipment | null>(
     shipments.find((s) => s.status === 'in_transit' || s.status === 'departed') || shipments[0] || null,
@@ -134,6 +139,26 @@ export default function LogisticsPage() {
   const [handler, setHandler] = useState('调度员');
   const [remark, setRemark] = useState('');
   const [contactMessage, setContactMessage] = useState('');
+  const [schedDriverFilter, setSchedDriverFilter] = useState('all');
+  const [schedVehicleFilter, setSchedVehicleFilter] = useState('all');
+  const [schedRouteFilter, setSchedRouteFilter] = useState('all');
+  const [schedStatusFilter, setSchedStatusFilter] = useState('all');
+  const [selectedPendingIds, setSelectedPendingIds] = useState<string[]>([]);
+  const [batchVehicle, setBatchVehicle] = useState('');
+  const [batchDriver, setBatchDriver] = useState('');
+
+  useEffect(() => {
+    const state = location.state as { orderId?: string } | null;
+    if (state?.orderId) {
+      const shipment = getShipmentForOrder(state.orderId);
+      if (shipment) {
+        setSelectedShipment(shipment);
+        setChartShipmentId(shipment.id);
+        setDrawerOpen(true);
+        showToast(`已定位到配送单 ${shipment.vehicleNo}`);
+      }
+    }
+  }, [location.state, getShipmentForOrder]);
 
   useEffect(() => {
     if (successToast) {
@@ -267,6 +292,74 @@ export default function LogisticsPage() {
     setShowContactPanel(false);
     setContactShipment(null);
     setContactMessage('');
+  };
+
+  const allDrivers = useMemo(() => {
+    const drivers = new Set<string>();
+    shipments.forEach((s) => s.driver && drivers.add(s.driver));
+    return Array.from(drivers);
+  }, [shipments]);
+
+  const allVehicles = useMemo(() => {
+    const vehicles = new Set<string>();
+    shipments.forEach((s) => s.vehicleNo && vehicles.add(s.vehicleNo));
+    return Array.from(vehicles);
+  }, [shipments]);
+
+  const allRoutes = useMemo(() => {
+    const routes = new Set<string>();
+    shipments.forEach((s) => s.route && routes.add(s.route));
+    return Array.from(routes);
+  }, [shipments]);
+
+  const filteredShipments = useMemo(() => {
+    return shipments.filter((s) => {
+      const matchDriver = schedDriverFilter === 'all' || s.driver === schedDriverFilter;
+      const matchVehicle = schedVehicleFilter === 'all' || s.vehicleNo === schedVehicleFilter;
+      const matchRoute = schedRouteFilter === 'all' || s.route === schedRouteFilter;
+      const matchStatus = schedStatusFilter === 'all' || s.status === schedStatusFilter;
+      return matchDriver && matchVehicle && matchRoute && matchStatus;
+    });
+  }, [shipments, schedDriverFilter, schedVehicleFilter, schedRouteFilter, schedStatusFilter]);
+
+  const pendingShipments = useMemo(() => {
+    return filteredShipments.filter((s) => s.status === 'pending');
+  }, [filteredShipments]);
+
+  const handleBatchDispatch = () => {
+    if (selectedPendingIds.length === 0) {
+      showToast('请先选择待派单');
+      return;
+    }
+    if (!batchVehicle || !batchDriver) {
+      showToast('请选择车辆和司机');
+      return;
+    }
+    const updated = batchDispatchShipments(selectedPendingIds, batchVehicle, batchDriver);
+    if (updated.length > 0) {
+      showToast(`已成功派单 ${updated.length} 单，车辆：${batchVehicle}，司机：${batchDriver}`);
+      setSelectedPendingIds([]);
+      setBatchVehicle('');
+      setBatchDriver('');
+      if (updated[0]) {
+        setSelectedShipment(updated[0]);
+        setChartShipmentId(updated[0].id);
+      }
+    }
+  };
+
+  const togglePendingSelect = (id: string) => {
+    setSelectedPendingIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const selectAllPending = () => {
+    if (selectedPendingIds.length === pendingShipments.length) {
+      setSelectedPendingIds([]);
+    } else {
+      setSelectedPendingIds(pendingShipments.map(s => s.id));
+    }
   };
 
   const chartShipment = shipments.find((s) => s.id === chartShipmentId);
@@ -1346,6 +1439,170 @@ export default function LogisticsPage() {
           colorVariant="chrysanthemum"
           delay={150}
         />
+      </div>
+
+      <div className="card-base p-5 opacity-0 animate-fadeInUp" style={{ animationDelay: '200ms' }}>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-base font-semibold text-forest-900 flex items-center gap-2">
+            <Settings className="w-5 h-5 text-forest-600" />
+            配送调度台
+          </h3>
+          <span className="text-xs text-cream-500">筛选后共 {filteredShipments.length} 条配送单，待派单 {pendingShipments.length} 条</span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+          <div>
+            <label className="block text-xs font-medium text-forest-700 mb-1">司机</label>
+            <select
+              value={schedDriverFilter}
+              onChange={(e) => setSchedDriverFilter(e.target.value)}
+              className="input-base w-full text-sm"
+            >
+              <option value="all">全部司机</option>
+              {allDrivers.map((d) => (
+                <option key={d} value={d}>{d}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-forest-700 mb-1">车辆</label>
+            <select
+              value={schedVehicleFilter}
+              onChange={(e) => setSchedVehicleFilter(e.target.value)}
+              className="input-base w-full text-sm"
+            >
+              <option value="all">全部车辆</option>
+              {allVehicles.map((v) => (
+                <option key={v} value={v}>{v}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-forest-700 mb-1">线路</label>
+            <select
+              value={schedRouteFilter}
+              onChange={(e) => setSchedRouteFilter(e.target.value)}
+              className="input-base w-full text-sm"
+            >
+              <option value="all">全部线路</option>
+              {allRoutes.map((r) => (
+                <option key={r} value={r}>{r}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-forest-700 mb-1">订单状态</label>
+            <select
+              value={schedStatusFilter}
+              onChange={(e) => setSchedStatusFilter(e.target.value)}
+              className="input-base w-full text-sm"
+            >
+              <option value="all">全部状态</option>
+              <option value="pending">待派单</option>
+              <option value="departed">已发车</option>
+              <option value="in_transit">在途</option>
+              <option value="arrived">已到达</option>
+              <option value="completed">已完成</option>
+            </select>
+          </div>
+        </div>
+
+        {pendingShipments.length > 0 && (
+          <div className="border-t border-cream-200 pt-4 mt-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={selectAllPending}
+                  className="text-xs text-forest-600 hover:text-forest-800 flex items-center gap-1"
+                >
+                  {selectedPendingIds.length === pendingShipments.length ? (
+                    <Check className="w-4 h-4" />
+                  ) : (
+                    <div className="w-4 h-4 border-2 border-cream-300 rounded" />
+                  )}
+                  全选待派单
+                </button>
+                <span className="text-xs text-cream-500">已选 {selectedPendingIds.length} 条</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <select
+                  value={batchVehicle}
+                  onChange={(e) => setBatchVehicle(e.target.value)}
+                  className="input-base text-sm w-40"
+                >
+                  <option value="">选择车辆</option>
+                  {allVehicles.map((v) => (
+                    <option key={v} value={v}>{v}</option>
+                  ))}
+                </select>
+                <select
+                  value={batchDriver}
+                  onChange={(e) => setBatchDriver(e.target.value)}
+                  className="input-base text-sm w-32"
+                >
+                  <option value="">选择司机</option>
+                  {allDrivers.map((d) => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleBatchDispatch}
+                  disabled={selectedPendingIds.length === 0 || !batchVehicle || !batchDriver}
+                  className={cn(
+                    'px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors flex items-center gap-1.5',
+                    selectedPendingIds.length > 0 && batchVehicle && batchDriver
+                      ? 'bg-forest-600 hover:bg-forest-700'
+                      : 'bg-gray-300 cursor-not-allowed'
+                  )}
+                >
+                  <Navigation className="w-4 h-4" />
+                  批量派单
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+              {pendingShipments.map((s) => {
+                const order = getOrder(s.orderId);
+                const customer = order ? getCustomer(order.customerId) : null;
+                const isSelected = selectedPendingIds.includes(s.id);
+                return (
+                  <div
+                    key={s.id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      togglePendingSelect(s.id);
+                    }}
+                    className={cn(
+                      'p-3 rounded-xl border cursor-pointer transition-all',
+                      isSelected
+                        ? 'border-forest-500 bg-forest-50 shadow-sm'
+                        : 'border-cream-200 bg-white hover:border-forest-300 hover:shadow-sm'
+                    )}
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <div className={cn(
+                        'w-5 h-5 rounded border-2 flex-shrink-0 flex items-center justify-center mt-0.5',
+                        isSelected ? 'bg-forest-500 border-forest-500' : 'border-cream-300'
+                      )}>
+                        {isSelected && <Check className="w-3 h-3 text-white" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-mono text-sm font-semibold text-forest-800">{order?.orderNo || s.id}</span>
+                          <span className="badge bg-gray-100 text-gray-600 text-xs">待派单</span>
+                        </div>
+                        <p className="text-xs text-forest-700 truncate mb-1">{customer?.name || '-'}</p>
+                        <p className="text-[10px] text-cream-500 truncate">{order?.deliveryAddress || s.route || '-'}</p>
+                        <p className="text-[10px] text-cream-400 mt-1">金额：{order ? formatMoney(order.totalAmount) : '-'}</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {renderWarningBar()}

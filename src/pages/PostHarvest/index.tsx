@@ -57,7 +57,7 @@ const PRE_COOL_LOCATIONS = ['冷库A-01', '冷库A-02', '冷库A-03', '冷库B-0
 const PRESERVATIVES = ['8-HQC', 'STS', '蔗糖+8-HQC', '专用保鲜剂'];
 
 export default function PostHarvestPage() {
-  const { harvests, inventory, batches, fields, addHarvest, addInventoryItems } = useAppStore();
+  const { harvests, inventory, batches, fields, addHarvest, addInventoryItems, updateInventoryStatus, getAvailableStock } = useAppStore();
   const [currentStep, setCurrentStep] = useState(1);
   const [formExpanded, setFormExpanded] = useState(true);
 
@@ -355,6 +355,31 @@ export default function PostHarvestPage() {
           {getStatusText(row.status, 'inventory')}
         </span>
       ),
+    },
+    {
+      key: 'actions',
+      title: '操作',
+      render: (row: PreCoolRecord) => {
+        if (row.status === 'precooling') {
+          return (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                const updated = updateInventoryStatus(row.id, 'stored');
+                if (updated) {
+                  showToast(`${row.variety} ${row.grade}级 ${formatNum(row.quantity)}枝 已完成预冷，转入在库`);
+                  setCurrentStep(3);
+                }
+              }}
+              className="px-3 py-1.5 rounded-lg bg-forest-600 text-white text-xs font-medium hover:bg-forest-700 transition-colors flex items-center gap-1"
+            >
+              <Snowflake className="w-3.5 h-3.5" />
+              预冷完成
+            </button>
+          );
+        }
+        return <span className="text-xs text-cream-400">-</span>;
+      },
     },
   ];
 

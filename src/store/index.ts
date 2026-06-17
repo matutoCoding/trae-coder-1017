@@ -9,6 +9,7 @@ import type {
   Return,
   PriceRecord,
   TempLog,
+  PaymentReminder,
 } from '@/types';
 import {
   initialFields,
@@ -60,16 +61,21 @@ interface AppState {
   monthlyReports: any[];
   festivalPredictions: any[];
   warningRecords: WarningRecord[];
+  paymentReminders: PaymentReminder[];
 
   updateFieldStatus: (id: string, status: Field['status']) => void;
   addHarvest: (harvest: Harvest) => void;
   addInventoryItems: (items: Inventory[]) => void;
+  updateInventoryStatus: (id: string, status: Inventory['status']) => Inventory | null;
+  getAvailableStock: (variety: string, grade: string) => number;
   updateOrderStatus: (id: string, status: Order['status']) => void;
   addOrder: (order: Order) => void;
   addReturn: (returnItem: Return) => void;
   addShipment: (shipment: Shipment) => void;
   createShipmentFromOrder: (orderId: string) => Shipment;
+  getShipmentForOrder: (orderId: string) => Shipment | undefined;
   dispatchShipment: (shipmentId: string) => Shipment | null;
+  batchDispatchShipments: (shipmentIds: string[], vehicleNo: string, driver: string) => Shipment[];
   updateShipmentStatus: (
     id: string,
     status: Shipment['status'],
@@ -84,7 +90,8 @@ interface AppState {
     customerId: string,
     message: string,
     amount: number,
-  ) => boolean;
+  ) => PaymentReminder | null;
+  getPaymentRemindersForCustomer: (customerId: string) => PaymentReminder[];
   resolveWarning: (
     shipmentId: string,
     resolution: string,
@@ -118,6 +125,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   monthlyReports,
   festivalPredictions,
   warningRecords: [],
+  paymentReminders: [],
 
   updateFieldStatus: (id, status) =>
     set((state) => ({
@@ -266,10 +274,92 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   addPaymentReminder: (customerId, message, amount) => {
     const customer = get().customers.find((c) => c.id === customerId);
-    if (!customer) return false;
+    if (!customer) return null;
+
+    const reminder: PaymentReminder = {
+      id: `PR-${Date.now()}`,
+      customerId,
+      amount,
+      message,
+      sentAt: new Date().toISOString(),
+      status: 'sent',
+    };
+
+    set((state) => ({
+      paymentReminders: [...state.paymentReminders, reminder],
+    }));
 
     console.log(`[催款提醒] 已向 ${customer.name} 发送催款通知，金额 ¥${amount.toLocaleString()}：${message}`);
-    return true;
+    return reminder;
+  },
+
+  getPaymentRemindersForCustomer: (customerId) => {
+    return get().paymentReminders
+      .filter((r) => r.customerId === customerId)
+      .sort((a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime());
+  },
+
+  getShipmentForOrder: (orderId) => {
+    return get().shipments.find((s) => s.orderId === orderId);
+  },
+
+  batchDispatchShipments: (shipmentIds, vehicleNo, driver) => {
+    const { shipments, generateTempLogs } = get();
+    const now = new Date();
+    const updated: Shipment[] = [];
+
+    shipmentIds.forEach((id) => {
+      const shipment = shipments.find((s) => s.id === id);
+      if (shipment && shipment.status === 'pending') {
+        const estimatedHours = 3 + Math.floor(Math.random() * 5);
+        const estArrival = new Date(now.getTime() + estimatedHours * 3600000);
+
+        const updatedShipment: Shipment = {
+          ...shipment,
+          vehicleNo,
+          driver,
+          departedAt: now.toISOString(),
+          estimatedArrival: estArrival.toISOString(),
+          status: 'departed',
+          tempLogs: generateTempLogs(now.toISOString(), estimatedHours + 1),
+        };
+        updated.push(updatedShipment);
+      }
+    });
+
+    set((state) => ({
+      shipments: state.shipments.map((s) => {
+        const found = updated.find((u) => u.id === s.id);
+        return found || s;
+      }),
+    }));
+
+    return updated;
+  },
+
+  updateInventoryStatus: (id, status) => {
+    const inventory = get().inventory.find((i) => i.id === id);
+    if (!inventory) return null;
+
+    const updated: Inventory = { ...inventory, status };
+
+    set((state) => ({
+      inventory: state.inventory.map((i) =>
+        i.id === id ? updated : i,
+      ),
+    }));
+
+    return updated;
+  },
+
+  getAvailableStock: (variety, grade) => {
+    return get()
+      .inventory.filter((i) =>
+        i.variety === variety &&
+        i.grade === grade &&
+        (i.status === 'stored' || i.status === 'precooling')
+      )
+      .reduce((sum, i) => sum + i.quantity, 0);
   },
 
   resolveWarning: (shipmentId, resolution, handler, remark) => {

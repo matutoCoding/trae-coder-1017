@@ -19,6 +19,7 @@ import {
   ChevronDown,
   MessageSquare,
   CheckCircle2,
+  AlertCircle,
   Building2,
   Flower2,
   Store,
@@ -45,6 +46,7 @@ import { useAppStore } from '@/store';
 import { StatCard } from '@/components/ui/StatCard';
 import { DataTable } from '@/components/ui/DataTable';
 import { cn } from '@/lib/utils';
+import { formatNum } from '@/utils/format';
 import type { Order } from '@/types';
 
 type KanbanStatus = 'pending' | 'confirmed' | 'picking' | 'shipped' | 'completed' | 'returned';
@@ -133,22 +135,22 @@ const PIE_COLORS = ['#059669', '#0ea5e9', '#f59e0b'];
 
 export default function OrdersPage() {
   const navigate = useNavigate();
-  const { orders, customers, shipments, updateOrderStatus, addShipment, createShipmentFromOrder, addOrder } = useAppStore();
+  const { orders, customers, shipments, updateOrderStatus, addShipment, createShipmentFromOrder, addOrder, getAvailableStock } = useAppStore();
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(orders[0] || null);
   const [drawerOpen, setDrawerOpen] = useState(true);
   const [showNewOrderForm, setShowNewOrderForm] = useState(false);
   const [newOrderCustomer, setNewOrderCustomer] = useState<string | null>(null);
-  const [successToast, setSuccessToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   useEffect(() => {
-    if (successToast) {
-      const timer = setTimeout(() => setSuccessToast(null), 3000);
+    if (toast) {
+      const timer = setTimeout(() => setToast(null), 3000);
       return () => clearTimeout(timer);
     }
-  }, [successToast]);
+  }, [toast]);
 
-  const showToast = (msg: string) => {
-    setSuccessToast(msg);
+  const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message: msg, type });
   };
 
   const today = new Date().toISOString().slice(0, 10);
@@ -242,6 +244,25 @@ export default function OrdersPage() {
   };
 
   const handleStatusChange = (order: Order, newStatus: Order['status']) => {
+    if (newStatus === 'picking') {
+      const stockIssues: string[] = [];
+      order.items.forEach((item) => {
+        const available = getAvailableStock(item.variety, item.grade);
+        if (available < item.quantity) {
+          stockIssues.push(
+            `${varietyNameMap[item.variety] || item.variety} ${item.grade}级 需求${formatNum(item.quantity)}枝，可用仅${formatNum(available)}枝，缺${formatNum(item.quantity - available)}枝`
+          );
+        }
+      });
+      if (stockIssues.length > 0) {
+        showToast(
+          `库存不足！${stockIssues.join('；')}`,
+          'error'
+        );
+        return;
+      }
+    }
+
     updateOrderStatus(order.id, newStatus);
 
     if (newStatus === 'shipped') {
@@ -299,7 +320,7 @@ export default function OrdersPage() {
   };
 
   const goToLogistics = (orderId: string) => {
-    navigate('/logistics');
+    navigate('/logistics', { state: { orderId } });
   };
 
   const renderOrderCard = (order: Order) => {
@@ -430,13 +451,44 @@ export default function OrdersPage() {
       {
         key: 'variety',
         title: '品种',
-        render: (row: any) => (
-          <span className="font-medium text-forest-900">
-            {varietyNameMap[row.variety] || row.variety} {row.grade}级
-          </span>
-        ),
+        render: (row: any) => {
+          const available = getAvailableStock(row.variety, row.grade);
+          const insufficient = available < row.quantity;
+          return (
+            <div className="flex flex-col gap-1">
+              <span className={cn(
+                'font-medium',
+                insufficient ? 'text-red-600' : 'text-forest-900'
+              )}>
+                {varietyNameMap[row.variety] || row.variety} {row.grade}级
+              </span>
+              {insufficient && (
+                <span className="text-[10px] text-red-500 flex items-center gap-0.5">
+                  <AlertCircle className="w-2.5 h-2.5" />
+                  库存不足
+                </span>
+              )}
+            </div>
+          );
+        },
       },
-      { key: 'quantity', title: '数量', render: (row: any) => <span>{row.quantity}枝</span> },
+      { key: 'quantity', title: '需求数量', render: (row: any) => <span>{formatNum(row.quantity)}枝</span> },
+      {
+        key: 'availableStock',
+        title: '可用库存',
+        render: (row: any) => {
+          const available = getAvailableStock(row.variety, row.grade);
+          const insufficient = available < row.quantity;
+          return (
+            <span className={cn(
+              'font-semibold',
+              insufficient ? 'text-red-600' : 'text-forest-600'
+            )}>
+              {formatNum(available)}枝
+            </span>
+          );
+        },
+      },
       {
         key: 'unitPrice',
         title: '单价',
@@ -999,11 +1051,18 @@ export default function OrdersPage() {
         />
       )}
 
-      {successToast && (
+      {toast && (
         <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 animate-fadeInUp">
-          <div className="bg-forest-700 text-white px-5 py-3 rounded-xl shadow-lg flex items-center gap-3">
-            <CheckCircle2 className="w-5 h-5 text-emerald-300" />
-            <span className="text-sm font-medium">{successToast}</span>
+          <div className={cn(
+            'px-5 py-3 rounded-xl shadow-lg flex items-center gap-3',
+            toast.type === 'success' ? 'bg-forest-700 text-white' : 'bg-red-600 text-white'
+          )}>
+            {toast.type === 'success' ? (
+              <CheckCircle2 className="w-5 h-5 text-emerald-300" />
+            ) : (
+              <AlertCircle className="w-5 h-5 text-red-200" />
+            )}
+            <span className="text-sm font-medium">{toast.message}</span>
           </div>
         </div>
       )}

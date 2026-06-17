@@ -115,6 +115,7 @@ export default function CustomersPage() {
     addOrder,
     updateCustomerCredit,
     addPaymentReminder,
+    getPaymentRemindersForCustomer,
   } = useAppStore();
   const [searchText, setSearchText] = useState('');
   const [activeType, setActiveType] = useState<CustomerType>('all');
@@ -132,6 +133,7 @@ export default function CustomersPage() {
   const [reminderMessage, setReminderMessage] = useState('');
   const [newOrderAmount, setNewOrderAmount] = useState('');
   const [newOrderRemark, setNewOrderRemark] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     if (successToast) {
@@ -141,6 +143,7 @@ export default function CustomersPage() {
   }, [successToast]);
 
   const showToast = (msg: string) => setSuccessToast(msg);
+  const forceRefresh = () => setRefreshKey((k) => k + 1);
 
   const currentMonth = new Date().toISOString().slice(0, 7);
   const customersWithExtra = customers as CustomerWithExtra[];
@@ -156,7 +159,7 @@ export default function CustomersPage() {
       0,
     );
     return { total, active, newThisMonth, totalReceivable };
-  }, [customers, customersWithExtra, currentMonth]);
+  }, [customers, customersWithExtra, currentMonth, refreshKey]);
 
   const filteredCustomers = useMemo(() => {
     return customersWithExtra.filter((c) => {
@@ -168,7 +171,7 @@ export default function CustomersPage() {
       const matchLevel = activeLevel === 'all' || c.level === activeLevel;
       return matchSearch && matchType && matchLevel;
     });
-  }, [customersWithExtra, searchText, activeType, activeLevel]);
+  }, [customersWithExtra, searchText, activeType, activeLevel, refreshKey]);
 
   const chartData = useMemo(() => {
     return [...customersWithExtra]
@@ -178,7 +181,7 @@ export default function CustomersPage() {
         name: c.name.length > 6 ? c.name.slice(0, 6) + '…' : c.name,
         采购额: Math.round((c.totalPurchases || 0) / 10000),
       }));
-  }, [customersWithExtra]);
+  }, [customersWithExtra, refreshKey]);
 
   const creditData = useMemo(() => {
     return customersWithExtra.map((c) => {
@@ -214,7 +217,7 @@ export default function CustomersPage() {
         remainingCredit: c.creditLimit - c.usedCredit,
       };
     });
-  }, [customersWithExtra, orders]);
+  }, [customersWithExtra, orders, refreshKey]);
 
   const returnsData = useMemo(() => {
     return returns.map((r) => {
@@ -226,7 +229,7 @@ export default function CustomersPage() {
         orderNo: order?.orderNo || '-',
       };
     });
-  }, [returns, customersWithExtra, orders]);
+  }, [returns, customersWithExtra, orders, refreshKey]);
 
   const getCustomerOrders = (customerId: string) =>
     orders
@@ -301,6 +304,7 @@ export default function CustomersPage() {
     setOrderModalOpen(false);
     setNewOrderAmount('');
     setNewOrderRemark('');
+    forceRefresh();
     showToast(`订单 ${newOrder.orderNo} 已创建，客户：${selectedCustomer.name}`);
   };
 
@@ -317,6 +321,7 @@ export default function CustomersPage() {
       setCreditModalOpen(false);
       setNewCreditLimit('');
       setCreditRemark('');
+      forceRefresh();
       showToast(`${selectedCustomer.name} 额度已调整为 ${formatMoney(limit)}`);
     }
   };
@@ -333,6 +338,7 @@ export default function CustomersPage() {
       setReminderModalOpen(false);
       setReminderAmount('');
       setReminderMessage('');
+      forceRefresh();
       showToast(`已向 ${selectedCustomer.name} 发送催款提醒`);
     }
   };
@@ -1088,10 +1094,19 @@ export default function CustomersPage() {
             </div>
 
             <div className="card-base p-4">
-              <h3 className="section-title text-base mb-3">
-                <FileText className="w-4 h-4 text-forest-600" />
-                账期明细（最近5条）
-              </h3>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="section-title text-base mb-0">
+                  <FileText className="w-4 h-4 text-forest-600" />
+                  账期明细（最近5条）
+                </h3>
+                <button
+                  onClick={() => selectedCustomer && openReminder(selectedCustomer)}
+                  className="text-xs text-warning-600 hover:text-warning-700 flex items-center gap-1"
+                >
+                  <Bell className="w-3.5 h-3.5" />
+                  催款提醒
+                </button>
+              </div>
               <div className="space-y-2">
                 {mockBills.map((bill) => (
                   <div
@@ -1123,6 +1138,52 @@ export default function CustomersPage() {
                 ))}
               </div>
             </div>
+
+            {selectedCustomer && (
+              <div className="card-base p-4">
+                <h3 className="section-title text-base mb-3">
+                  <Bell className="w-4 h-4 text-warning-500" />
+                  催款提醒记录
+                </h3>
+                {(() => {
+                  const reminders = getPaymentRemindersForCustomer(selectedCustomer.id);
+                  if (reminders.length === 0) {
+                    return (
+                      <p className="text-center py-6 text-cream-500 text-sm">暂无催款记录</p>
+                    );
+                  }
+                  return (
+                    <div className="space-y-2 max-h-[240px] overflow-y-auto pr-1">
+                      {reminders.map((r) => (
+                        <div key={r.id} className="p-3 bg-warning-50/50 rounded-lg border border-warning-200/50">
+                          <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-xs font-medium text-warning-700">
+                              催款金额：{formatMoney(r.amount)}
+                            </span>
+                            <span className="text-[10px] text-cream-500">
+                              {formatDate(r.sentAt, 'YYYY-MM-DD HH:mm')}
+                            </span>
+                          </div>
+                          <p className="text-xs text-forest-700 leading-relaxed line-clamp-2">
+                            {r.message}
+                          </p>
+                          <div className="flex items-center justify-between mt-2">
+                            <span className={cn(
+                              'text-[10px] px-2 py-0.5 rounded-full',
+                              r.status === 'sent' ? 'bg-sky-100 text-sky-700' :
+                              r.status === 'paid' ? 'bg-green-100 text-green-700' :
+                              'bg-gray-100 text-gray-600'
+                            )}>
+                              {r.status === 'sent' ? '已发送' : r.status === 'paid' ? '已付款' : '待发送'}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
 
             <div className="card-base p-4">
               <div className="flex items-center justify-between mb-3">
