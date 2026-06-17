@@ -15,6 +15,11 @@ import {
   Snowflake,
   Warehouse,
   AlertCircle,
+  Search,
+  Filter,
+  ArrowRight,
+  AlertTriangle,
+  ShoppingCart,
 } from 'lucide-react';
 import {
   PieChart,
@@ -61,7 +66,7 @@ const statusTextMap: Record<string, string> = {
   expired: '已过期',
 };
 
-const STEPS = ['采收登记', '品质分级', '保鲜预冷', '入库存储', '库存预警'];
+const STEPS = ['采收登记', '品质分级', '保鲜预冷', '入库存储', '库存预警', '批次流水'];
 
 interface PreCoolRecord extends Inventory {
   batchId?: string;
@@ -76,11 +81,15 @@ const PRE_COOL_LOCATIONS = ['冷库A-01', '冷库A-02', '冷库A-03', '冷库B-0
 const PRESERVATIVES = ['8-HQC', 'STS', '蔗糖溶液', '柠檬酸', '8-HQS', '硝酸银'];
 
 export default function PostHarvestPage() {
-  const { harvests, inventory, batches, fields, addHarvest, addInventoryItems, updateInventoryStatus, getAvailableStock, getInventoryStats, getInventoryFlowRecords } = useAppStore();
+  const { harvests, inventory, batches, fields, orders, addHarvest, addInventoryItems, updateInventoryStatus, getAvailableStock, getInventoryStats, getInventoryFlowRecords, getProcurementSuggestions } = useAppStore();
   const [currentStep, setCurrentStep] = useState(1);
   const [formExpanded, setFormExpanded] = useState(true);
   const [selectedInvVariety, setSelectedInvVariety] = useState<string | null>(null);
   const [selectedInvGrade, setSelectedInvGrade] = useState<string | null>(null);
+  const [flowFilterVariety, setFlowFilterVariety] = useState<string>('');
+  const [flowFilterOrderId, setFlowFilterOrderId] = useState<string>('');
+  const [flowFilterHarvestId, setFlowFilterHarvestId] = useState<string>('');
+  const [showProcurement, setShowProcurement] = useState(false);
 
   const [batchId, setBatchId] = useState('');
   const [harvestedAt, setHarvestedAt] = useState(formatDate(new Date()));
@@ -928,10 +937,18 @@ export default function PostHarvestPage() {
             <Warehouse className="w-5 h-5 text-forest-600" />
             库存预警视图
           </h2>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-cream-500">
-              低库存阈值：500枝
-            </span>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowProcurement(!showProcurement)}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',
+                showProcurement ? 'bg-forest-600 text-white' : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+              )}
+            >
+              <ShoppingCart className="w-3.5 h-3.5" />
+              补采建议
+            </button>
+            <span className="text-xs text-cream-500">低库存阈值：500枝</span>
           </div>
         </div>
 
@@ -1125,6 +1142,206 @@ export default function PostHarvestPage() {
               </div>
             </div>
           )}
+        </div>
+      </div>
+
+      {showProcurement && (
+        <div className="card-base p-5 opacity-0 animate-fadeInUp" style={{ animationDelay: '1000ms' }}>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-bold text-forest-900 font-serif flex items-center gap-2">
+              <ShoppingCart className="w-5 h-5 text-amber-600" />
+              补采/调拨建议
+            </h2>
+            <button onClick={() => setShowProcurement(false)} className="text-xs text-cream-500 hover:text-cream-700">关闭</button>
+          </div>
+          {(() => {
+            const suggestions = getProcurementSuggestions();
+            if (suggestions.length === 0) {
+              return <p className="text-center py-8 text-cream-500 text-sm">暂无补采建议，库存充足</p>;
+            }
+            return (
+              <div className="space-y-3">
+                {suggestions.map((s, idx) => (
+                  <div key={`${s.variety}-${s.grade}`} className={cn(
+                    'p-4 rounded-xl border',
+                    s.urgency === 'high' ? 'bg-red-50 border-red-200' :
+                    s.urgency === 'medium' ? 'bg-amber-50 border-amber-200' :
+                    'bg-sky-50 border-sky-200'
+                  )}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-forest-900">
+                          {varietyNameMap[s.variety] || s.variety} {s.grade}级
+                        </span>
+                        <span className={cn(
+                          'px-2 py-0.5 rounded text-xs font-medium',
+                          s.urgency === 'high' ? 'bg-red-100 text-red-700' :
+                          s.urgency === 'medium' ? 'bg-amber-100 text-amber-700' :
+                          'bg-sky-100 text-sky-700'
+                        )}>
+                          {s.urgency === 'high' ? '紧急' : s.urgency === 'medium' ? '较急' : '一般'}
+                        </span>
+                      </div>
+                      <span className={cn(
+                        'text-sm font-bold',
+                        s.urgency === 'high' ? 'text-red-700' :
+                        s.urgency === 'medium' ? 'text-amber-700' :
+                        'text-sky-700'
+                      )}>
+                        建议补采 {s.suggestedQuantity} 枝
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3 mb-2 text-xs">
+                      <div className="bg-white/60 rounded-lg p-2 text-center">
+                        <p className="text-cream-500 mb-0.5">可售</p>
+                        <p className="font-semibold text-forest-700">{formatNum(s.currentAvailable)}枝</p>
+                      </div>
+                      <div className="bg-white/60 rounded-lg p-2 text-center">
+                        <p className="text-cream-500 mb-0.5">预冷转入</p>
+                        <p className="font-semibold text-sky-600">{formatNum(s.precoolingIncoming)}枝</p>
+                      </div>
+                      <div className="bg-white/60 rounded-lg p-2 text-center">
+                        <p className="text-cream-500 mb-0.5">未来7天需求</p>
+                        <p className="font-semibold text-amber-600">{formatNum(s.upcomingDemand)}枝</p>
+                      </div>
+                    </div>
+                    <p className="text-xs text-cream-600">{s.reason}</p>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      <div className="card-base p-5 opacity-0 animate-fadeInUp" style={{ animationDelay: '1100ms' }}>
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-lg font-bold text-forest-900 font-serif flex items-center gap-2">
+            <ClipboardCheck className="w-5 h-5 text-forest-600" />
+            批次流水台账
+          </h2>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+          <div>
+            <label className="block text-xs font-medium text-forest-700 mb-1">品种</label>
+            <select
+              value={flowFilterVariety}
+              onChange={(e) => setFlowFilterVariety(e.target.value)}
+              className="input-base w-full text-sm"
+            >
+              <option value="">全部品种</option>
+              {Object.entries(varietyNameMap).map(([k, v]) => (
+                <option key={k} value={k}>{v}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-forest-700 mb-1">订单号</label>
+            <input
+              type="text"
+              value={flowFilterOrderId}
+              onChange={(e) => setFlowFilterOrderId(e.target.value)}
+              placeholder="输入订单号筛选"
+              className="input-base w-full text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-forest-700 mb-1">采收批次</label>
+            <input
+              type="text"
+              value={flowFilterHarvestId}
+              onChange={(e) => setFlowFilterHarvestId(e.target.value)}
+              placeholder="输入批次号筛选"
+              className="input-base w-full text-sm"
+            />
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-cream-200">
+                <th className="text-left py-3 px-3 text-cream-500 font-medium text-xs">时间</th>
+                <th className="text-left py-3 px-3 text-cream-500 font-medium text-xs">品种/等级</th>
+                <th className="text-left py-3 px-3 text-cream-500 font-medium text-xs">状态变更</th>
+                <th className="text-right py-3 px-3 text-cream-500 font-medium text-xs">数量</th>
+                <th className="text-left py-3 px-3 text-cream-500 font-medium text-xs">采收批次</th>
+                <th className="text-left py-3 px-3 text-cream-500 font-medium text-xs">关联订单</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(() => {
+                const records = getInventoryFlowRecords(
+                  flowFilterVariety || undefined,
+                  undefined,
+                  flowFilterOrderId || undefined,
+                  flowFilterHarvestId || undefined,
+                );
+                if (records.length === 0) {
+                  return (
+                    <tr>
+                      <td colSpan={6} className="text-center py-8 text-cream-500 text-sm">
+                        暂无流水记录，操作库存后自动生成
+                      </td>
+                    </tr>
+                  );
+                }
+                return records.slice(0, 50).map((record) => {
+                  const relatedOrder = orders.find((o) => o.id === record.orderId);
+                  return (
+                    <tr key={record.id} className="border-b border-cream-100 hover:bg-cream-50/50 transition-colors">
+                      <td className="py-2.5 px-3 text-xs text-cream-500">
+                        {new Date(record.operatedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <span className="font-medium text-forest-900 text-xs">
+                          {varietyNameMap[record.variety] || record.variety} {record.grade}级
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <span className="text-xs">
+                          <span className={cn(
+                            'px-1.5 py-0.5 rounded',
+                            record.fromStatus === 'stored' ? 'bg-green-50 text-green-700' :
+                            record.fromStatus === 'precooling' ? 'bg-sky-50 text-sky-700' :
+                            record.fromStatus === 'allocated' ? 'bg-amber-50 text-amber-700' :
+                            'bg-gray-50 text-gray-600'
+                          )}>
+                            {statusTextMap[record.fromStatus] || record.fromStatus}
+                          </span>
+                          <ArrowRight className="w-3 h-3 inline-block mx-1 text-cream-400" />
+                          <span className={cn(
+                            'px-1.5 py-0.5 rounded',
+                            record.toStatus === 'stored' ? 'bg-green-50 text-green-700' :
+                            record.toStatus === 'allocated' ? 'bg-amber-50 text-amber-700' :
+                            record.toStatus === 'shipped' ? 'bg-emerald-50 text-emerald-700' :
+                            record.toStatus === 'precooling' ? 'bg-sky-50 text-sky-700' :
+                            'bg-gray-50 text-gray-600'
+                          )}>
+                            {statusTextMap[record.toStatus] || record.toStatus}
+                          </span>
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-semibold text-forest-700 text-xs">
+                        {formatNum(record.quantity)}枝
+                      </td>
+                      <td className="py-2.5 px-3 text-xs font-mono text-cream-600">
+                        {record.harvestId}
+                      </td>
+                      <td className="py-2.5 px-3">
+                        {relatedOrder ? (
+                          <span className="text-xs font-mono text-sky-600">{relatedOrder.orderNo}</span>
+                        ) : (
+                          <span className="text-xs text-cream-400">-</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                });
+              })()}
+            </tbody>
+          </table>
         </div>
       </div>
 

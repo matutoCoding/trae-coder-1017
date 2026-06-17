@@ -117,6 +117,8 @@ export default function CustomersPage() {
     updateCustomerCredit,
     addPaymentReminder,
     getPaymentRemindersForCustomer,
+    getBillsForCustomer,
+    getAfterSalesForCustomer,
   } = useAppStore();
   const [searchText, setSearchText] = useState('');
   const [activeType, setActiveType] = useState<CustomerType>('all');
@@ -870,6 +872,8 @@ export default function CustomersPage() {
 
     const customerOrders = getCustomerOrders(selectedCustomer.id);
     const customerReturns = getCustomerReturns(selectedCustomer.id);
+    const customerBills = getBillsForCustomer(selectedCustomer.id);
+    const customerAfterSales = getAfterSalesForCustomer(selectedCustomer.id);
     const percent = getCreditPercent(selectedCustomer);
     const progressColor = getProgressColor(percent);
     const remainingCredit = selectedCustomer.creditLimit - selectedCustomer.usedCredit;
@@ -1125,7 +1129,7 @@ export default function CustomersPage() {
               <div className="flex items-center justify-between mb-3">
                 <h3 className="section-title text-base mb-0">
                   <FileText className="w-4 h-4 text-forest-600" />
-                  账期明细（最近5条）
+                  应收账单明细
                 </h3>
                 <button
                   onClick={() => selectedCustomer && openReminder(selectedCustomer)}
@@ -1136,36 +1140,92 @@ export default function CustomersPage() {
                 </button>
               </div>
               <div className="space-y-2">
-                {mockBills.map((bill) => (
-                  <div
-                    key={bill.id}
-                    className="flex items-center justify-between p-3 bg-cream-50 rounded-lg"
-                  >
-                    <div>
-                      <p className="font-mono text-sm font-medium text-forest-800">
-                        {bill.billNo}
-                      </p>
-                      <p className="text-xs text-cream-500 mt-0.5">
-                        账单日 {bill.date} · 到期 {bill.dueDate}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-semibold text-chrysanthemum-600">
-                        {formatMoney(bill.amount)}
-                      </p>
-                      <span className={cn(
-                        'badge mt-1',
-                        bill.status === '已付款' && 'bg-green-100 text-green-700',
-                        bill.status === '待付款' && 'bg-warning-100 text-warning-600',
-                        bill.status === '未到期' && 'bg-sky-100 text-sky-700',
-                      )}>
-                        {bill.status}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+                {customerBills.length === 0 ? (
+                  <p className="text-center py-6 text-cream-500 text-sm">暂无账单记录</p>
+                ) : (
+                  customerBills.slice(0, 10).map((bill) => {
+                    const relatedOrder = orders.find((o) => o.id === bill.orderId);
+                    const now = new Date().toISOString().slice(0, 10);
+                    const isOverdue = bill.status === 'overdue' || (bill.status === 'unpaid' && bill.dueDate < now);
+                    return (
+                      <div
+                        key={bill.id}
+                        className={cn(
+                          'flex items-center justify-between p-3 rounded-lg',
+                          isOverdue ? 'bg-red-50 border border-red-200' : 'bg-cream-50'
+                        )}
+                      >
+                        <div>
+                          <p className="font-mono text-sm font-medium text-forest-800">
+                            {bill.billNo}
+                          </p>
+                          <p className="text-xs text-cream-500 mt-0.5">
+                            账单日 {bill.createdAt.slice(0, 10)} · 到期 {bill.dueDate}
+                          </p>
+                          {relatedOrder && (
+                            <p className="text-[10px] text-sky-600 mt-0.5">
+                              关联订单：{relatedOrder.orderNo}
+                            </p>
+                          )}
+                        </div>
+                        <div className="text-right">
+                          <p className="font-semibold text-chrysanthemum-600">
+                            {formatMoney(bill.amount)}
+                          </p>
+                          <span className={cn(
+                            'badge mt-1',
+                            bill.status === 'paid' && 'bg-green-100 text-green-700',
+                            bill.status === 'overdue' && 'bg-red-100 text-red-700',
+                            bill.status === 'partial' && 'bg-warning-100 text-warning-600',
+                            bill.status === 'unpaid' && 'bg-sky-100 text-sky-700',
+                          )}>
+                            {bill.status === 'paid' ? '已付款' :
+                             bill.status === 'overdue' ? '已逾期' :
+                             bill.status === 'partial' ? '部分付款' : '未到期'}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
+
+            {customerAfterSales.length > 0 && (
+              <div className="card-base p-4">
+                <h3 className="section-title text-base mb-3">
+                  <AlertTriangle className="w-4 h-4 text-amber-500" />
+                  售后记录
+                </h3>
+                <div className="space-y-2">
+                  {customerAfterSales.map((as) => (
+                    <div key={as.id} className={cn(
+                      'p-3 rounded-lg border',
+                      as.status === 'completed' ? 'bg-green-50 border-green-200' :
+                      as.status === 'pending' ? 'bg-amber-50 border-amber-200' :
+                      'bg-gray-50 border-gray-200'
+                    )}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-mono text-forest-800">{as.id}</span>
+                        <span className={cn(
+                          'text-[10px] px-2 py-0.5 rounded-full',
+                          as.status === 'completed' ? 'bg-green-100 text-green-700' :
+                          as.status === 'pending' ? 'bg-amber-100 text-amber-700' :
+                          'bg-gray-100 text-gray-600'
+                        )}>
+                          {as.status === 'completed' ? '已处理' : as.status === 'pending' ? '待处理' : as.status}
+                        </span>
+                      </div>
+                      <p className="text-xs text-forest-700">{as.reason}</p>
+                      <div className="flex items-center gap-3 text-[10px] text-cream-500 mt-1">
+                        <span>金额：{formatMoney(as.amount)}</span>
+                        {as.returnToInventory && <span className="text-green-600">已退货入库</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {selectedCustomer && (
               <div className="card-base p-4">

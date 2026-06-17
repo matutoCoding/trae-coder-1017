@@ -124,6 +124,8 @@ export default function LogisticsPage() {
     getShipmentForOrder,
     batchDispatchShipments,
     completeShipment,
+    getAfterSalesForOrder,
+    createAfterSale,
   } = useAppStore();
   const [selectedShipment, setSelectedShipment] = useState<Shipment | null>(
     shipments.find((s) => s.status === 'in_transit' || s.status === 'departed') || shipments[0] || null,
@@ -207,7 +209,7 @@ export default function LogisticsPage() {
       setShowSignModal(false);
       setSelectedShipment(result.shipment);
       if (result.hasAnomaly) {
-        showToast('签收完成！注意：该单存在温湿度异常，请及时处理售后');
+        showToast('签收完成！已自动生成售后单，请前往订单页处理', 'error');
       } else {
         showToast(`配送单 ${signShipment.vehicleNo} 已签收完成`);
       }
@@ -1378,16 +1380,13 @@ export default function LogisticsPage() {
                         <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 flex-shrink-0" />
                         <div className="flex-1">
                           <p className="text-xs font-semibold text-red-800 mb-1">温湿度异常</p>
-                          <p className="text-[11px] text-red-600 mb-2">该订单冷链运输过程中存在温湿度超标情况，建议启动售后处理</p>
+                          <p className="text-[11px] text-red-600 mb-2">该订单冷链运输过程中存在温湿度超标情况，已自动生成售后单</p>
                           <div className="flex gap-2">
                             <button
-                              onClick={() => {
-                                setDrawerOpen(false);
-                                navigate('/customers');
-                              }}
+                              onClick={() => { setDrawerOpen(false); navigate('/orders'); }}
                               className="px-3 py-1.5 bg-red-600 text-white text-[11px] font-medium rounded hover:bg-red-700 transition-colors"
                             >
-                              售后处理
+                              前往订单处理售后
                             </button>
                           </div>
                         </div>

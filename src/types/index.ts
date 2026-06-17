@@ -213,6 +213,50 @@ export interface MonthlyReport {
   revenue: number;
 }
 
+export type AfterSaleStatus = 'pending' | 'processing' | 'completed' | 'rejected';
+export type AfterSaleType = 'return' | 'partial_refund' | 'replace';
+
+export interface AfterSale {
+  id: string;
+  orderId: string;
+  customerId: string;
+  type: AfterSaleType;
+  reason: string;
+  amount: number;
+  quantity: number;
+  status: AfterSaleStatus;
+  hasTempAnomaly: boolean;
+  returnToInventory: boolean;
+  createdAt: string;
+  processedAt?: string;
+  result?: string;
+}
+
+export type BillStatus = 'unpaid' | 'partial' | 'paid' | 'overdue';
+
+export interface ReceivableBill {
+  id: string;
+  billNo: string;
+  customerId: string;
+  orderId: string;
+  amount: number;
+  paidAmount: number;
+  dueDate: string;
+  createdAt: string;
+  status: BillStatus;
+}
+
+export interface ProcurementSuggestion {
+  variety: string;
+  grade: FlowerGrade;
+  currentAvailable: number;
+  precoolingIncoming: number;
+  upcomingDemand: number;
+  suggestedQuantity: number;
+  urgency: 'high' | 'medium' | 'low';
+  reason: string;
+}
+
 export interface FestivalForecast {
   festival: string;
   festivalDate: string;

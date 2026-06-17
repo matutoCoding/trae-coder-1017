@@ -23,6 +23,8 @@ import {
   Building2,
   Flower2,
   Store,
+  AlertTriangle,
+  RotateCcw,
 } from 'lucide-react';
 
 const typeNameMap: Record<string, string> = {
@@ -135,7 +137,7 @@ const PIE_COLORS = ['#059669', '#0ea5e9', '#f59e0b'];
 
 export default function OrdersPage() {
   const navigate = useNavigate();
-  const { orders, customers, shipments, inventory, updateOrderStatus, addShipment, createShipmentFromOrder, addOrder, getAvailableStock } = useAppStore();
+  const { orders, customers, shipments, inventory, updateOrderStatus, addShipment, createShipmentFromOrder, addOrder, getAvailableStock, getAfterSalesForOrder, processAfterSale } = useAppStore();
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(orders[0] || null);
   const [drawerOpen, setDrawerOpen] = useState(true);
   const [showNewOrderForm, setShowNewOrderForm] = useState(false);
@@ -246,12 +248,18 @@ export default function OrdersPage() {
   const handleStatusChange = (order: Order, newStatus: Order['status']) => {
     const result = updateOrderStatus(order.id, newStatus);
 
-    if (!result) {
+    if (!result.order) {
       showToast('订单不存在', 'error');
       return;
     }
 
-    if (newStatus === 'picking' && result.status === order.status) {
+    if (result.allocError) {
+      showToast(`备货失败：${result.allocError}`, 'error');
+      setSelectedOrder(result.order);
+      return;
+    }
+
+    if (newStatus === 'picking' && result.order.status === order.status) {
       return;
     }
 
@@ -272,7 +280,7 @@ export default function OrdersPage() {
       showToast(`订单 ${order.orderNo} 状态已更新为 ${statusConfig[mapOrderStatus(newStatus)].label}`);
     }
 
-    setSelectedOrder(result);
+    setSelectedOrder(result.order);
   };
 
   const handleQuickOrder = (customerId: string) => {
@@ -710,6 +718,95 @@ export default function OrdersPage() {
               </div>
             </div>
           )}
+
+          {(() => {
+            const afterSales = getAfterSalesForOrder(selectedOrder.id);
+            if (afterSales.length === 0 && !selectedOrder.hasTempAnomaly) return null;
+            return (
+              <div className="p-5 border-b border-cream-200">
+                <h3 className="text-sm font-semibold text-forest-700 mb-3 flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-500" /> 售后处理
+                </h3>
+                {selectedOrder.hasTempAnomaly && afterSales.length === 0 && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg mb-3">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
+                      <div className="flex-1">
+                        <p className="text-xs font-semibold text-red-700 mb-1">温湿度异常</p>
+                        <p className="text-[11px] text-red-600 mb-2">该订单冷链运输过程中存在温湿度超标情况</p>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleStatusChange(selectedOrder, 'returned')}
+                            className="px-2.5 py-1 bg-red-600 text-white text-[10px] font-medium rounded hover:bg-red-700 transition-colors"
+                          >
+                            申请退货
+                          </button>
+                          <button
+                            onClick={() => handleStatusChange(selectedOrder, 'cancelled')}
+                            className="px-2.5 py-1 bg-gray-100 text-gray-700 text-[10px] font-medium rounded hover:bg-gray-200 transition-colors"
+                          >
+                            取消订单
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {afterSales.map((as) => (
+                  <div key={as.id} className={cn(
+                    'p-3 rounded-lg border mb-2 last:mb-0',
+                    as.status === 'completed' ? 'bg-green-50 border-green-200' :
+                    as.status === 'pending' ? 'bg-amber-50 border-amber-200' :
+                    'bg-gray-50 border-gray-200'
+                  )}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-mono font-medium text-forest-800">{as.id}</span>
+                      <span className={cn(
+                        'text-[10px] px-2 py-0.5 rounded-full font-medium',
+                        as.status === 'completed' ? 'bg-green-100 text-green-700' :
+                        as.status === 'pending' ? 'bg-amber-100 text-amber-700' :
+                        as.status === 'processing' ? 'bg-sky-100 text-sky-700' :
+                        'bg-gray-100 text-gray-600'
+                      )}>
+                        {as.status === 'completed' ? '已处理' : as.status === 'pending' ? '待处理' : as.status === 'processing' ? '处理中' : '已驳回'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-forest-700 mb-1">{as.reason}</p>
+                    <div className="flex items-center gap-3 text-[10px] text-cream-500">
+                      <span>类型：{as.type === 'return' ? '退货' : as.type === 'partial_refund' ? '部分退款' : '补发'}</span>
+                      <span>金额：¥{as.amount.toLocaleString()}</span>
+                      {as.returnToInventory && <span className="text-green-600">已退回库存</span>}
+                    </div>
+                    {as.status === 'pending' && (
+                      <div className="flex gap-2 mt-2">
+                        <button
+                          onClick={() => {
+                            processAfterSale(as.id, '退货入库', true);
+                            showToast('售后已处理，库存已退回，额度已调整');
+                          }}
+                          className="px-2.5 py-1 bg-forest-600 text-white text-[10px] font-medium rounded hover:bg-forest-700 transition-colors"
+                        >
+                          退货入库
+                        </button>
+                        <button
+                          onClick={() => {
+                            processAfterSale(as.id, '仅退款不退货', false);
+                            showToast('售后已处理，仅退款不退货');
+                          }}
+                          className="px-2.5 py-1 bg-amber-500 text-white text-[10px] font-medium rounded hover:bg-amber-600 transition-colors"
+                        >
+                          仅退款
+                        </button>
+                      </div>
+                    )}
+                    {as.status === 'completed' && as.result && (
+                      <p className="text-[10px] text-green-600 mt-1.5">处理结果：{as.result}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
 
           <div className="p-5">
             <h3 className="text-sm font-semibold text-forest-700 mb-4 flex items-center gap-2">
